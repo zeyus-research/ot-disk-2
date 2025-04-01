@@ -1,0 +1,478 @@
+{{ block content }}
+<style>
+    .choices > div {
+        cursor: pointer;
+    }
+    #canvas {
+        position:absolute;
+        width: 100vw;
+        height: 100vh;
+        left:10px;
+        top:0;
+        /* position: relative;
+        left: calc(-1 * (100vw - 100%) / 2);
+        top: calc(-1 * (100vh - 100%) / 2); */
+    }
+    #lock-missing, #please-wait {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 100;
+        background-color: rgba(0, 0, 0, 0.7);
+        padding-top: 45vh;
+        overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+        text-align: center;
+        color: white;
+
+    }
+    #please-wait {
+        display: none;
+    }
+    #spacer {
+        height: 100vh;
+        width: 100%;
+        z-index: -1;
+    }
+    body {
+        overflow-x: hidden;
+        scrollbar-width: 0;
+    }
+    body::-webkit-scrollbar {
+        width: 0;
+    }
+</style>
+    <div id="trial-info"></div>
+<!-- break out of container-->
+    <div id="lock-missing">
+        <h3>Please click to start.</h3>
+    </div>
+    <div id="please-wait">
+        <h3>Please wait...</h3>
+    </div>
+    <canvas id="canvas" width="800" height="800">
+        Your browser does not support the HTML5 canvas element.
+    </canvas>
+    <div id="spacer"></div>
+    <input type="hidden" id="trial" value="{{ trial_id }}" />
+    <input type="hidden" id="foil" value="{{ foil }}" />
+    <input type="hidden" id="oddball" value="{{ oddball }}" />
+    <input type="hidden" id="num_images" value="{{ num_images }}" />
+    <input type="hidden" id="num_trials" value="{{ num_trials }}" />
+    <input type="hidden" id="page_type" value="{{ page_type }}" />
+
+    <script>
+        /**
+         * Images are presented in a circle around the center of the canvas.
+         * Each should be equally spaced, and scaled to fit all images on the canvas.
+         * @param {HTMLImageElement} img - the image to be displayed
+         * @param {HTMLCanvasElement} canvas - the canvas on which to display the image
+         * @param {number} nImages - the number of images to display
+         * @param {number} imageNum - the index of the image to display
+         * @returns {Object} - an object with the width, height, x, and y properties
+         */
+        function calcImgSizeAndPos(img, canvas, nImages, imageNum) {
+            const ctx = canvas.getContext('2d');
+            const imgWidth = img.width;
+            const imgHeight = img.height;
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            // imgScale is the ratio of the image's width to the canvas's width (or height), divided by 4 (to leave space around the image)
+            const imgScale = Math.min(canvasWidth, canvasHeight) / 4 / Math.max(imgWidth, imgHeight);
+            const imgScaledWidth = imgWidth * imgScale;
+            const imgScaledHeight = imgHeight * imgScale;
+            const imgX = canvasWidth / 2 + 1.25*imgScaledWidth * Math.cos(2 * Math.PI * imageNum / nImages);
+            const imgY = canvasHeight / 2 + 1.25*imgScaledHeight * Math.sin(2 * Math.PI * imageNum / nImages);
+            return {
+                width: imgScaledWidth,
+                height: imgScaledHeight,
+                x: imgX,
+                y: imgY,
+            };
+        }
+
+        function makeFixationCross(ctx, canvas) {
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - 10, canvas.height / 2);
+            ctx.lineTo(canvas.width / 2 + 10, canvas.height / 2);
+            ctx.moveTo(canvas.width / 2, canvas.height / 2 - 10);
+            ctx.lineTo(canvas.width / 2, canvas.height / 2 + 10);
+            ctx.stroke();
+        }
+
+        const speedScale = 1.0;
+        let oddballImageNum = 0;
+        let timeout;
+
+        // listen for messages from the server
+        let liveRecv = function (data) {
+            // placeholder
+            console.log('received', data);
+        }
+
+        function updateCoord(pos, delta, max) {
+            pos += delta * speedScale;
+            pos %= max;
+            if (pos < 0) {
+            pos += max;
+            }
+            return pos;
+        }
+        
+        
+        document.addEventListener("DOMContentLoaded", (event) => {
+            console.log('DOM fully loaded and parsed'); 
+
+            function locked() {
+                return Boolean(document.pointerLockElement);
+            }
+            // pointer lock test
+            const lockMissing = document.getElementById('lock-missing');
+            const pleaseWait = document.getElementById('please-wait');
+            const canvas = document.getElementById('canvas');
+            // canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
+            // document.exitPointerLock = document.exitPointerLock || document.mozExitPointerLock;
+            const ctx = canvas.getContext('2d');
+            const otreeForm = document.getElementById('form');
+            
+            
+            ctx.canvas.width = visualViewport.width;
+            ctx.canvas.height = visualViewport.height;
+            
+            document.addEventListener("mousemove", trace);
+
+            // initial page load, use hidden fields to populate the page
+            const trial = document.getElementById('trial');
+            const foil = document.getElementById('foil');
+            const oddball = document.getElementById('oddball');
+            const nImages = document.getElementById('num_images').value;
+            const nTrials = document.getElementById('num_trials').value;
+            const trialInfo = document.getElementById('trial-info');
+            const pageType = document.getElementById('page_type');
+
+            if (pageType.value === 'practice') {
+                trialInfo.innerHTML = 'Practice';
+            } else {
+                updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials);
+            }
+            // const choice1El = document.getElementById('choice_1');
+            // const choice2El = document.getElementById('choice_2');
+            // const target_img = document.getElementById('target_img');
+
+            const successImg = document.createElement('img');
+            successImg.src = "/static/success.png";
+            successImg.classList.add('img-fluid');
+
+            const failImg = document.createElement('img');
+            failImg.src = "/static/failure.png";
+            failImg.classList.add('img-fluid');
+            
+            const foilImg = document.createElement('img');
+            foilImg.id = 'choice1_img';
+            foilImg.classList.add('img-fluid');
+            
+            const oddballImg = document.createElement('img');
+            oddballImg.id = 'choice2_img';
+            oddballImg.classList.add('img-fluid');
+
+            let coord = {
+                x: canvas.width / 2,
+                y: canvas.height / 2
+            };  // mouse coordinates
+            let pointing = false; 
+            let trialReady = false;
+            let trialDone = false;
+            let resultImg = null;
+
+            let targetCenters = [];
+
+            function getPosition(event){ 
+                coord.x = updateCoord(coord.x, event.movementX, canvas.width);
+                coord.y = updateCoord(coord.y, event.movementY, canvas.height);
+            }
+
+            function moveCursorToCenter() {
+                coord.x = canvas.width / 2;
+                coord.y = canvas.height / 2;
+            }
+
+
+            function startPointing(event){ 
+                pointing = true; 
+
+            } 
+            function stopPointing(){ 
+                pointing = false; 
+            } 
+
+            function drawPointer() {
+                // draw the mouse pointer
+                ctx.beginPath();
+                ctx.fillStyle = 'red';
+                ctx.arc(coord.x, coord.y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            function showLockMissing() {
+                lockMissing.style.display = 'block';
+                stopPointing();
+            }
+            function sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+            /* draw a mouse pointer, but no line or trail */
+            function trace(event){
+                if (!locked()) {
+                    showLockMissing();
+                    return;
+                }
+                if (!pointing || !trialReady) return;
+                if (event) getPosition(event);
+                clearCanvas();
+                updateImages(oddballImageNum);
+                drawPointer();
+            }
+
+            function addResult() {
+                if (!trialDone || resultImg === null) {
+                    return;
+                }
+                if (resultImg.isOddball) {
+                    addToCanvas(successImg, resultImg.i);
+                } else {
+                    addToCanvas(failImg, resultImg.i);
+                }
+            }
+        
+            function checkTarget() {
+                const inTarget = cursorInTarget();
+                if (inTarget !== null) {
+                    console.log('in target' + inTarget.i);
+                    moveCursorToCenter();
+                    trialReady = false;
+                    trialDone = true;
+                    resultImg = inTarget;
+                    addResult();
+                    stopPointing();
+                    liveSend({ event: 'choice', trial: trial.value, choice: inTarget.i, isOddball: inTarget.isOddball });
+                }
+            }
+
+            function updateTrialInfo(infoEl, trialNum, nTrials) {
+                // update the block number (block is 222 trials)
+                const blockNum = Math.floor((trialNum - 1) / 222) + 1;
+                // trial number is within the block
+                trialNum = (trialNum) % 222;
+                const trialInBlock = trialNum === 0 ? 222 : trialNum;
+                infoEl.innerHTML = `Block ${blockNum}, Trial ${trialInBlock}/222`;
+
+                return { block: blockNum, trial: trialInBlock };
+            }
+
+
+            visualViewport.addEventListener('resize', () => {
+                ctx.canvas.width = visualViewport.width;
+                ctx.canvas.height = visualViewport.height;
+                clearCanvas();
+                updateImages(oddballImageNum);
+                moveCursorToCenter();
+                trace(null);
+            });
+
+
+            async function lockPointer() {
+                if(locked()) {
+                    lockMissing.style.display = 'none';
+                    startPointing();
+                    return;
+                }
+                try {
+                    await canvas.requestPointerLock({
+                        unadjustedMovement: false,
+                    });
+                    console.log('pointer locked');
+                    lockMissing.style.display = 'none';
+                    startPointing();
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+            
+            canvas.addEventListener("click", async () => {
+                if (locked()) {
+                    if (!pointing || !trialReady) return;
+                    checkTarget();
+                    return;
+                }
+                await lockPointer();
+            });
+            lockMissing.addEventListener("click", async () => {
+                if (!locked()) {
+                    await lockPointer();
+                }
+                lockMissing.style.display = 'none';
+            });
+            
+            
+
+            function clearCanvas() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            function drawContinueButton() {
+                ctx.font = '20px Arial';
+                ctx.fillStyle = 'black';
+                const text = 'Click to continue';
+                const textWidth = ctx.measureText(text).width;
+                const textHeight = ctx.measureText('W').width;
+                const vOffset = Math.floor(textHeight / 2);
+                console.log(vOffset);
+                ctx.fillText(text, canvas.width / 2 - textWidth / 2, canvas.height / 2 + vOffset);
+            
+                // draw a rectangle around the text
+                ctx.beginPath();
+                ctx.rect(canvas.width / 2 - textWidth / 2 - 5, canvas.height / 2 - vOffset - 5, textWidth + 10, textHeight + 10);
+                ctx.stroke();
+
+
+            }
+
+            function cursorInTarget() {
+                for (let i = 0; i < targetCenters.length; i++) {
+                    const target = targetCenters[i];
+                    if (Math.sqrt((coord.x - target.x) ** 2 + (coord.y - target.y) ** 2) < target.r) {
+                        return target;
+                    }
+                }
+                return null;
+            }
+
+            function addToCanvas(img, imgNum) {
+                const imgSizeAndPos = calcImgSizeAndPos(img, canvas, nImages, imgNum);
+                ctx.drawImage(img, imgSizeAndPos.x - imgSizeAndPos.width / 2, imgSizeAndPos.y - imgSizeAndPos.height / 2, imgSizeAndPos.width, imgSizeAndPos.height);
+                return { x: imgSizeAndPos.x, y: imgSizeAndPos.y, r: imgSizeAndPos.width / 2 };
+            }
+
+            function updateImages(oddN = null) {
+                makeFixationCross(ctx, canvas);
+                // add nImages - 1 foil images + 1 oddball image (randomly placed)
+                if (oddN === null) {
+                    oddballImageNum = Math.floor(Math.random() * nImages);
+                    console.log(oddballImageNum);
+                } else {
+                    oddballImageNum = oddN;
+                }
+                targetCenters = [];
+                for (let i = 0; i < nImages; i++) {
+                    if (i === oddballImageNum) {
+                        const center = addToCanvas(oddballImg, i);
+                        center["i"] = i;
+                        center["isOddball"] = true;
+                        targetCenters.push(center);
+                    } else {
+                        const center = addToCanvas(foilImg, i);
+                        center["i"] = i;
+                        center["isOddball"] = false;
+                        targetCenters.push(center);
+                    }
+                }
+                addResult();
+            }
+            
+            function startTrial() {
+                if (trialReady) {
+                    return;
+                }
+                if (!foilImg.complete) {
+                    foilImg.addEventListener('load', startTrial, { once: true });
+                    return;
+                }
+                if (!oddballImg.complete) {
+                    oddballImg.addEventListener('load', startTrial, { once: true });
+                    return;
+                }
+                trialDone = false;
+                resultImg = null;
+                liveSend({ event: 'start' });
+                console.log('trial started');
+                clearCanvas();
+                moveCursorToCenter();
+                updateImages();
+                drawPointer();
+                lockPointer();
+                pleaseWait.style.display = 'none';
+                trialReady = true;
+            }
+
+            function updateTrial(cont = true) {
+                
+                foilImg.src = "/static/" + foil.value;
+                oddballImg.src = "/static/" + oddball.value;
+
+                
+                if (!cont) {
+                    console.log('trial not continued');
+                    startTrial();
+                    return;
+                }
+                
+                return;
+            }
+            console.log('trial', trial.value);
+            updateTrial();
+            clearCanvas();
+            drawContinueButton();
+            canvas.addEventListener("click", () => {
+                startTrial();
+            }, { once: true });
+            
+
+            liveRecv = function(data) {
+                const event = Object.keys(data).includes('event') ? data.event : null;
+                switch (event) {
+                    case 'next':
+                        // get trial id if sent
+                        let trial_id = parseInt(trial.value);
+                        if (Object.keys(data).includes('trial_id')) {
+                            trial_id = data.trial_id;
+                        }
+                        // show result, then request next trial
+                        console.log('next trial, current: ', trial_id);
+                        liveSend({ event: 'next', trial: trial_id });
+                        break;
+                    case 'trial':
+                        // update the trial
+                        trial.value = data.trial_id;
+                        foil.value = data.foil;
+                        oddball.value = data.oddball;
+                        pageType.value = data.page_type;
+
+                        if (data.page_type === 'practice') {
+                            trialInfo.innerHTML = 'Practice';
+                        } else {
+                            updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials);
+                        }
+                        // start with a 1 second delay
+                        // to avoid participants flying through all the trials
+                        updateTrial();
+                        sleep(1000).then(() => {
+                            clearCanvas();
+                            drawContinueButton();
+                            canvas.addEventListener("click", () => {
+                                startTrial();
+                            }, { once: true });
+                        });
+                        
+                        break;
+                    case 'end':
+                        otreeForm.submit();
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+        });
+    </script>
+{{ endblock }}

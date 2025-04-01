@@ -1,0 +1,163 @@
+{{ block content }}
+    <style>
+        #pager p {
+            margin-top: 2em;
+        }
+        #pager .btn {
+            margin-top: 2em;
+        }
+    </style>
+    <div id="pager">
+        <div class="row">
+            <div class="col-md-12">
+                <h1 id="page-title" style="text-align: left;"></h1>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12">
+                <div id="content"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-12">
+                <div id="continue-button"></div>
+            </div>
+        </div>
+    </div>
+    <template id="continue-button-template">
+        <div style="text-align: center;">
+            <slot name="continue-text"></slot><p>Click the button below to continue.</p></slot>
+            <button type="button" class="btn btn-primary"><slot name="btn-text">Continue</slot></button>
+        </div>
+    </template>
+    <template data-type="welcome-message" data-title="">
+        <div style="text-align: center;">
+            <h2>Thank you for participating in this experiment!</h2>
+            <p>Before you start, please read the following consent form carefully.</p>
+        </div>
+    </template>
+    <template data-type="consent-form-content" data-title="Consent Form">
+        <div>
+            <h2><slot name="heading"></slot></h2>
+            <p><slot name="content"></slot></p>
+        </div>
+    </template>
+    <script>
+        const welcomeContent = document.querySelector('template[data-type="welcome-message"]').content.cloneNode(true);
+        const consentFormTemplate = document.querySelector('template[data-type="consent-form-content"]').content.cloneNode(true);
+
+        const consentFormContent = [
+            {
+                heading: '1. Title of Research',
+                content: `You are being invited to take part in the research study “Visual discrimination of Paleolithic decorative motifs”.
+                            
+                            We would like to ask you for your consent to participate in the study and for us to treat your data  in agreement with data protection legislation. Before you decide to participate in this study, it is important  that you understand why the research is being done and what it will involve.
+                            
+                            Please take the time to read  the following information carefully.`
+            },
+            {
+                heading: '2. Project Description and Aim of the Study',
+                content: `This study is part of a larger EU ERC/US NSF collaboration and your participation will benefit researchers as well as a general audience interested in human evolution.
+
+                            This study seeks to track symbolic behavior and social networks among hunter-foragers during the Ice Age of western Europe (ca. 20,000 to 14,000 years ago). During this period, humans used symbols to encode social information onto objects, especially items of personal ornamentation. This study focuses on one type of these objects - small, perforated disks that were made from stone or bone. 
+
+                            Your participation will benefit researchers in the project as well as a general audience from a diverse field interested in studies of human evolution. We aim to publish the results of the study in a high-profile international scientific journal.`,
+            },
+            {
+                heading: '3. Data Controller, Research Group, and Principal Investigator',
+                content: `Aarhus University is a data controller for the processing of your personal data. The research group consists of Kristian Tylén, (hereinafter “research group”). 
+
+                            Principal investigator: Kristian Tylén, <a href="mailto:kristian@cc.au.dk">kristian@cc.au.dk</a>
+
+                            Other study group members: Arnault-Quentin Vermillet, <a href="mailto:arnault@cc.au.dk">arnault@cc.au.dk</a>; Isobel Wisher, <a href="mailto:izzywisher@cas.au.dk">izzywisher@cas.au.dk</a>.
+
+                            The study is financed by ERC Consolidator Grant (101044626 - eSYMb) awarded to Kristian Tylén.`
+            },
+            {
+                heading: '4. Study Procedure',
+                content: `In this experiment, you will be presented with six black-and-white outlines of decorated discs from the Ice Age that will be placed in a circle. Five of the discs are identical, while one is different - this is the "oddball". Your task is to locate the oddball and click on it as fast as possible.
+
+                            There will be 666 trials. Each trial will take only a couple of seconds. The total estimated time for this experiment is 25-30 minutes.`
+            },
+            {
+                heading: '5. Benefits and Risks',
+                content: `This study informs fundamental discussions about social networks and symbolic behavior in the era of the Ice Age. Findings will thus be of great interest to researchers in the area of cultural evolution, archaeology and cognitive science. 
+
+                            There are no conceivable disadvantages or risks involved in the data collection procedures beyond those encountered in normal everyday life. It is, however, possible that you might encounter mild fatigue and/or boredom during the tasks, but you will be compensated for your time.
+
+                            Your expected earnings for participating in the study are €6. The study is expected to last approximately 30 minutes.`
+            },
+            [
+                {
+                    heading: '6. Type of personal data and when it is deleted/anonymized',
+                    content: `The main data collected in this study consist of accuracy and reaction times scores from the experiment. Besides, we collect basic demographic data in the form of age, gender and nationality. Everything regarding compensation for your participation is handled by Prolific.`
+                },
+                {
+                    heading: '7. Withdrawal of consent',
+                    content: `Participation is voluntary and you may withdraw your consent at any time without stating a reason. Since data is anonymized, it should be noted that you can withdraw consent up until you leave the experiment, but the consent cannot be withdrawn thereafter, since your personal data will no longer be identifiable.`
+                }
+            ],
+            {
+                heading: '',
+                content: `By clicking 'I consent', I confirm to have received, read and understood the above information and that:
+                
+                            <ul class="ul-capital-letters"><li>My participation is voluntary, and I may withdraw my consent and discontinue participation in the project at any time as specified in point 8. My refusal to participate will not result in any penalty</li><li>By signing this agreement, I do not waive any legal rights or release Aarhus University or its agents from liability for negligence.</li><li>I give my consent to treat my personal data and to participate as a subject in the study as described above.</li></ul>`
+            }
+
+        ]
+
+        document.addEventListener("DOMContentLoaded", (event) => {
+            const otreeForm = document.getElementById('form');
+
+            const pageTitle = document.getElementById('page-title');
+
+            const contentEl = document.getElementById('content');
+
+            const continueButtonTemplate = document.getElementById('continue-button-template').content.cloneNode(true);
+
+            const continueButtonEl = document.getElementById('continue-button');
+
+            let consentPage = 0;
+
+            // on page load, show the welcome message
+            contentEl.appendChild(welcomeContent);
+
+            // add the continue button
+            continueButtonEl.appendChild(continueButtonTemplate);
+
+            // add event listener to the continue button
+            continueButtonEl.querySelector('button').addEventListener('click', () => {
+                if (consentPage < consentFormContent.length) {
+                    contentEl.innerHTML = '';
+                    const consentFormDetails = consentFormContent[consentPage].constructor === Array ? consentFormContent[consentPage] : [consentFormContent[consentPage]];
+                
+                    for (const consentForm of consentFormDetails) {
+                        const consentFormEl = consentFormTemplate.cloneNode(true);
+                        consentFormEl.querySelector('slot[name="heading"]').textContent = consentForm.heading;
+                        // wrap each line in <p> tags
+                            console.log(consentForm)
+                        consentForm.content.split('\n').forEach((line) => {
+                            const trimmedLine = line.trim();
+                            if (trimmedLine === '') {
+                                return;
+                            }
+                            const p = document.createElement('p');
+                            p.innerHTML = trimmedLine;
+                            consentFormEl.querySelector('slot[name="content"]').appendChild(p);
+                        });
+
+                        contentEl.appendChild(consentFormEl);
+                    }
+                    consentPage++;
+                    // if it's the last page, change the button text
+                    if (consentPage === consentFormContent.length) {
+                        continueButtonEl.querySelector('button').textContent = 'I consent';
+                    }
+                } else {
+                    otreeForm.submit();
+                }
+            });
+
+        });
+    </script>
+{{ endblock }}
