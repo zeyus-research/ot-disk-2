@@ -2,8 +2,8 @@ from os import environ
 
 SESSION_CONFIGS: list[dict] = [
     dict(
-        name='disks',
-        app_sequence=['disks'],
+        name='diskcomp',
+        app_sequence=['diskcomp'],
         num_demo_participants=1,
     ),
 ]
