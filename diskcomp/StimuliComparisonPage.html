@@ -1,0 +1,517 @@
+{{ block content }}
+<style>
+    .choices > div {
+        cursor: pointer;
+    }
+    #canvas {
+        position:absolute;
+        width: 100vw;
+        height: 100vh;
+        left:10px;
+        top:0;
+    }
+    #lock-missing, #please-wait {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 100;
+        background-color: rgba(0, 0, 0, 0.7);
+        padding-top: 45vh;
+        overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+        text-align: center;
+        color: white;
+    }
+    #please-wait {
+        display: none;
+    }
+    #spacer {
+        height: 100vh;
+        width: 100%;
+        z-index: -1;
+    }
+    body {
+        overflow-x: hidden;
+        scrollbar-width: 0;
+    }
+    body::-webkit-scrollbar {
+        width: 0;
+    }
+</style>
+    <div id="trial-info"></div>
+<!-- break out of container-->
+    <div id="lock-missing">
+        <h3>Please click to start.</h3>
+    </div>
+    <div id="please-wait">
+        <h3>Please wait...</h3>
+    </div>
+    <canvas id="canvas" width="800" height="800">
+        Your browser does not support the HTML5 canvas element.
+    </canvas>
+    <div id="spacer"></div>
+    <input type="hidden" id="trial" value="{{ trial_id }}" />
+    <input type="hidden" id="target" value="{{ target }}" />
+    <input type="hidden" id="left_option" value="{{ left_option }}" />
+    <input type="hidden" id="right_option" value="{{ right_option }}" />
+    <input type="hidden" id="num_trials" value="{{ num_trials }}" />
+    <input type="hidden" id="trials_in_block" value="{{ trials_in_block }}" />
+    <input type="hidden" id="page_type" value="{{ page_type }}" />
+
+    <script>
+        /**
+         * Calculate image size and position for the three-image layout
+         * @param {HTMLImageElement} img - the image to be displayed
+         * @param {HTMLCanvasElement} canvas - the canvas on which to display the image
+         * @param {string} position - 'target', 'left', or 'right'
+         * @returns {Object} - an object with the width, height, x, and y properties
+         */
+        function calcImgSizeAndPos(img, canvas, position) {
+            const ctx = canvas.getContext('2d');
+            const imgWidth = img.width;
+            const imgHeight = img.height;
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            
+            // Scale for all images (adjust as needed)
+            const imgScale = Math.min(canvasWidth, canvasHeight) / 5 / Math.max(imgWidth, imgHeight);
+            const imgScaledWidth = imgWidth * imgScale;
+            const imgScaledHeight = imgHeight * imgScale;
+            
+            let imgX, imgY;
+            
+            // Position images based on their role
+            if (position === 'target') {
+                // Bottom center
+                imgX = canvasWidth / 2;
+                imgY = canvasHeight * 0.75;
+            } else if (position === 'left') {
+                // Left center
+                imgX = canvasWidth * 0.25;
+                imgY = canvasHeight * 0.4;
+            } else if (position === 'right') {
+                // Right center
+                imgX = canvasWidth * 0.75;
+                imgY = canvasHeight * 0.4;
+            }
+            
+            return {
+                width: imgScaledWidth,
+                height: imgScaledHeight,
+                x: imgX,
+                y: imgY,
+            };
+        }
+
+        function makeFixationCross(ctx, canvas) {
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - 10, canvas.height / 2);
+            ctx.lineTo(canvas.width / 2 + 10, canvas.height / 2);
+            ctx.moveTo(canvas.width / 2, canvas.height / 2 - 10);
+            ctx.lineTo(canvas.width / 2, canvas.height / 2 + 10);
+            ctx.stroke();
+        }
+
+        const speedScale = 1.0;
+        let timeout;
+
+        // listen for messages from the server
+        let liveRecv = function (data) {
+            // placeholder
+            console.log('received', data);
+        }
+
+        function updateCoord(pos, delta, max) {
+            pos += delta * speedScale;
+            pos %= max;
+            if (pos < 0) {
+            pos += max;
+            }
+            return pos;
+        }
+        
+        
+        document.addEventListener("DOMContentLoaded", (event) => {
+            console.log('DOM fully loaded and parsed'); 
+
+            function locked() {
+                return Boolean(document.pointerLockElement);
+            }
+            // pointer lock test
+            const lockMissing = document.getElementById('lock-missing');
+            const pleaseWait = document.getElementById('please-wait');
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const otreeForm = document.getElementById('form');
+            
+            
+            ctx.canvas.width = visualViewport.width;
+            ctx.canvas.height = visualViewport.height;
+            
+            document.addEventListener("mousemove", trace);
+
+            // initial page load, use hidden fields to populate the page
+            const trial = document.getElementById('trial');
+            const target = document.getElementById('target');
+            const leftOption = document.getElementById('left_option');
+            const rightOption = document.getElementById('right_option');
+            const nTrials = document.getElementById('num_trials').value;
+            const trialsInBlock = document.getElementById('trials_in_block').value;
+            const trialInfo = document.getElementById('trial-info');
+            const pageType = document.getElementById('page_type');
+
+            console.log(leftOption.value);
+            console.log(rightOption.value);
+
+            if (pageType.value === 'practice') {
+                trialInfo.innerHTML = 'Practice';
+            } else {
+                updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials, trialsInBlock);
+            }
+
+            const successImg = document.createElement('img');
+            successImg.src = "/static/success.png";
+            successImg.classList.add('img-fluid');
+
+            const failImg = document.createElement('img');
+            failImg.src = "/static/failure.png";
+            failImg.classList.add('img-fluid');
+            
+            const targetImg = document.createElement('img');
+            targetImg.id = 'target_img';
+            targetImg.classList.add('img-fluid');
+            
+            const leftOptionImg = document.createElement('img');
+            leftOptionImg.id = 'left_option_img';
+            leftOptionImg.classList.add('img-fluid');
+            
+            const rightOptionImg = document.createElement('img');
+            rightOptionImg.id = 'right_option_img';
+            rightOptionImg.classList.add('img-fluid');
+
+            let coord = {
+                x: canvas.width / 2,
+                y: canvas.height / 2
+            };  // mouse coordinates
+            let pointing = false; 
+            let trialReady = false;
+            let trialDone = false;
+            let resultImg = null;
+
+            let targetCenters = [];
+
+            function getPosition(event){ 
+                coord.x = updateCoord(coord.x, event.movementX, canvas.width);
+                coord.y = updateCoord(coord.y, event.movementY, canvas.height);
+            }
+
+            function moveCursorToCenter() {
+                coord.x = canvas.width / 2;
+                coord.y = canvas.height / 2;
+            }
+
+            function startPointing(event){ 
+                pointing = true; 
+            } 
+            
+            function stopPointing(){ 
+                pointing = false; 
+            } 
+
+            function drawPointer() {
+                // draw the mouse pointer
+                ctx.beginPath();
+                ctx.fillStyle = 'red';
+                ctx.arc(coord.x, coord.y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            function showLockMissing() {
+                lockMissing.style.display = 'block';
+                stopPointing();
+            }
+            
+            function sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+            
+            /* draw a mouse pointer, but no line or trail */
+            function trace(event){
+                if (!locked()) {
+                    showLockMissing();
+                    return;
+                }
+                if (!pointing || !trialReady) return;
+                if (event) getPosition(event);
+                clearCanvas();
+                updateImages();
+                drawPointer();
+            }
+
+            function addResult() {
+                if (!trialDone || resultImg === null) {
+                    return;
+                }
+                
+                // Display feedback based on which option was chosen
+                if (resultImg.position === 'left') {
+                    addToCanvas(resultImg.correct ? successImg : failImg, 'left-feedback');
+                } else if (resultImg.position === 'right') {
+                    addToCanvas(resultImg.correct ? successImg : failImg, 'right-feedback');
+                }
+            }
+        
+            function checkTarget() {
+                const inTarget = cursorInTarget();
+                if (inTarget !== null) {
+                    console.log('Selected: ' + inTarget.position);
+                    moveCursorToCenter();
+                    trialReady = false;
+                    trialDone = true;
+                    resultImg = inTarget;
+                    addResult();
+                    stopPointing();
+                    
+                    // Send the choice to the server - either 'left' or 'right'
+                    liveSend({ 
+                        event: 'choice', 
+                        trial: trial.value, 
+                        choice: inTarget.position,
+                        correct: inTarget.correct 
+                    });
+                }
+            }
+
+            function updateTrialInfo(infoEl, trialNum, nTrials, trialsInBlock) {
+                // update the block number (block is 222 trials)
+                const blockNum = Math.floor((trialNum - 1) / trialsInBlock) + 1;
+                // trial number is within the block
+                trialNum = (trialNum) % trialsInBlock;
+                const trialInBlock = trialNum === 0 ? trialsInBlock : trialNum;
+                infoEl.innerHTML = `Block ${blockNum}, Trial ${trialInBlock}/${trialsInBlock}`;
+
+                return { block: blockNum, trial: trialInBlock };
+            }
+
+            visualViewport.addEventListener('resize', () => {
+                ctx.canvas.width = visualViewport.width;
+                ctx.canvas.height = visualViewport.height;
+                clearCanvas();
+                updateImages();
+                moveCursorToCenter();
+                trace(null);
+            });
+
+            async function lockPointer() {
+                if(locked()) {
+                    lockMissing.style.display = 'none';
+                    startPointing();
+                    return;
+                }
+                try {
+                    await canvas.requestPointerLock({
+                        unadjustedMovement: false,
+                    });
+                    console.log('pointer locked');
+                    lockMissing.style.display = 'none';
+                    startPointing();
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+            
+            canvas.addEventListener("click", async () => {
+                if (locked()) {
+                    if (!pointing || !trialReady) return;
+                    checkTarget();
+                    return;
+                }
+                await lockPointer();
+            });
+            
+            lockMissing.addEventListener("click", async () => {
+                if (!locked()) {
+                    await lockPointer();
+                }
+                lockMissing.style.display = 'none';
+            });
+            
+            function clearCanvas() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            function drawContinueButton() {
+                ctx.font = '20px Arial';
+                ctx.fillStyle = 'black';
+                const text = 'Click to continue';
+                const textWidth = ctx.measureText(text).width;
+                const textHeight = ctx.measureText('W').width;
+                const vOffset = Math.floor(textHeight / 2);
+                console.log(vOffset);
+                ctx.fillText(text, canvas.width / 2 - textWidth / 2, canvas.height / 2 + vOffset);
+            
+                // draw a rectangle around the text
+                ctx.beginPath();
+                ctx.rect(canvas.width / 2 - textWidth / 2 - 5, canvas.height / 2 - vOffset - 5, textWidth + 10, textHeight + 10);
+                ctx.stroke();
+            }
+
+            function cursorInTarget() {
+                for (let i = 0; i < targetCenters.length; i++) {
+                    const target = targetCenters[i];
+                    if (Math.sqrt((coord.x - target.x) ** 2 + (coord.y - target.y) ** 2) < target.r) {
+                        return target;
+                    }
+                }
+                return null;
+            }
+
+            function addToCanvas(img, position) {
+                const imgSizeAndPos = calcImgSizeAndPos(img, canvas, position);
+                ctx.drawImage(img, imgSizeAndPos.x - imgSizeAndPos.width / 2, imgSizeAndPos.y - imgSizeAndPos.height / 2, imgSizeAndPos.width, imgSizeAndPos.height);
+                return { 
+                    x: imgSizeAndPos.x, 
+                    y: imgSizeAndPos.y, 
+                    r: imgSizeAndPos.width / 2,
+                    position: position,
+                    correct: position === 'correct_option' // This will be set based on the trial data
+                };
+            }
+
+            function updateImages() {
+                makeFixationCross(ctx, canvas);
+                
+                // Reset target centers
+                targetCenters = [];
+                
+                // Add the three images to their respective positions
+                
+                // Target image at the bottom
+                addToCanvas(targetImg, 'target');
+                
+                // Left option (make this clickable)
+                const leftCenter = addToCanvas(leftOptionImg, 'left');
+                leftCenter.position = 'left'; // Store the position for identification
+                
+                // Set whether this is the correct option based on trial data
+                // This needs to be set based on your trial data structure
+                leftCenter.correct = (leftOption.value === 'correct');
+                
+                targetCenters.push(leftCenter);
+                
+                // Right option (make this clickable)
+                const rightCenter = addToCanvas(rightOptionImg, 'right');
+                rightCenter.position = 'right'; // Store the position for identification
+                
+                // Set whether this is the correct option based on trial data
+                rightCenter.correct = (rightOption.value === 'correct');
+                
+                targetCenters.push(rightCenter);
+                
+                addResult();
+            }
+            
+            function startTrial() {
+                if (trialReady) {
+                    return;
+                }
+                
+                // Make sure all images are loaded
+                if (!targetImg.complete) {
+                    targetImg.addEventListener('load', startTrial, { once: true });
+                    return;
+                }
+                if (!leftOptionImg.complete) {
+                    leftOptionImg.addEventListener('load', startTrial, { once: true });
+                    return;
+                }
+                if (!rightOptionImg.complete) {
+                    rightOptionImg.addEventListener('load', startTrial, { once: true });
+                    return;
+                }
+                
+                trialDone = false;
+                resultImg = null;
+                liveSend({ event: 'start' });
+                console.log('trial started');
+                clearCanvas();
+                moveCursorToCenter();
+                updateImages();
+                drawPointer();
+                lockPointer();
+                pleaseWait.style.display = 'none';
+                trialReady = true;
+            }
+
+            function updateTrial(cont = true) {
+                targetImg.src = "/static/" + target.value;
+                leftOptionImg.src = "/static/" + leftOption.value;
+                rightOptionImg.src = "/static/" + rightOption.value;
+                
+                if (!cont) {
+                    console.log('trial not continued');
+                    startTrial();
+                    return;
+                }
+                
+                return;
+            }
+            
+            console.log('trial', trial.value);
+            updateTrial();
+            clearCanvas();
+            drawContinueButton();
+            canvas.addEventListener("click", () => {
+                startTrial();
+            }, { once: true });
+            
+
+            liveRecv = function(data) {
+                const event = Object.keys(data).includes('event') ? data.event : null;
+                switch (event) {
+                    case 'next':
+                        // get trial id if sent
+                        let trial_id = parseInt(trial.value);
+                        if (Object.keys(data).includes('trial_id')) {
+                            trial_id = data.trial_id;
+                        }
+                        // show result, then request next trial
+                        console.log('next trial, current: ', trial_id);
+                        liveSend({ event: 'next', trial: trial_id });
+                        break;
+                    case 'trial':
+                        // update the trial
+                        trial.value = data.trial_id;
+                        target.value = data.target;
+                        leftOption.value = data.left_option;
+                        rightOption.value = data.right_option;
+                        pageType.value = data.page_type;
+
+                        if (data.page_type === 'practice') {
+                            trialInfo.innerHTML = 'Practice';
+                        } else {
+                            updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials, trialsInBlock);
+                        }
+                        // start with a 1 second delay
+                        // to avoid participants flying through all the trials
+                        updateTrial();
+                        sleep(1000).then(() => {
+                            clearCanvas();
+                            drawContinueButton();
+                            canvas.addEventListener("click", () => {
+                                startTrial();
+                            }, { once: true });
+                        });
+                        
+                        break;
+                    case 'end':
+                        otreeForm.submit();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
+    </script>
+{{ endblock }}

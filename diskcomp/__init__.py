@@ -11,14 +11,14 @@ from otree.api import (  # type: ignore
 )
 from otree.models import Participant  # type: ignore
 import json
-from random import randint
+from random import randint, choice
 from datetime import datetime
 from typing import ClassVar, Generator, Any, Literal
 from pathlib import Path
 import pandas as pd
 
 doc = """
-Disk study
+Stimulus comparison study
 """
 
 
@@ -34,14 +34,13 @@ class AnnotationFreeMeta(DeclarativeMeta):
 
 
 class C(BaseConstants):
-    NAME_IN_URL: str = "disks"
+    NAME_IN_URL: str = "diskcomp"
     PLAYERS_PER_GROUP: int | None = None
     NUM_ROUNDS: int = 1  # one for each exp type, using live pages
     STIM_PATH: Path = Path("stimuli")
     STIM_CSV: Path = Path(__file__).parent / "_private/trial_list.csv"
-    NUM_FOILS: int = 6
     NUM_PRACTICE_TRIALS: int = 3
-    TRIALS_IN_BLOCK: int = 222
+    TRIALS_IN_BLOCK: int = 2
 
 
 class DataCache:
@@ -51,7 +50,8 @@ class DataCache:
     def get(cls) -> pd.DataFrame:
         if cls.cache is None:
             # read the CSV file
-            # ,ID,order,trial,oddball,foil
+            # Modify this based on your CSV structure
+            # Example format: ID,order,trial,target,left_option,right_option,correct_option
             cls.cache = pd.read_csv(C.STIM_CSV)
         return cls.cache
 
@@ -67,13 +67,15 @@ class Player(BasePlayer, metaclass=AnnotationFreeMeta):
 
 class Trial(ExtraModel, metaclass=AnnotationFreeMeta):
     trial_id: int = models.IntegerField()
-    oddball: str = models.StringField()
-    foil: str = models.StringField()
+    target: str = models.StringField()
+    left_option: str = models.StringField()
+    right_option: str = models.StringField()
+    correct_option: str = models.StringField()  # 'left' or 'right'
     csv_order: int = models.IntegerField()
     player: Player = models.Link(Player)
     trial_start: float = models.FloatField(initial=0.0)
     trial_end: float = models.FloatField(initial=0.0)
-    response: str = models.StringField(initial="")
+    response: str = models.StringField(initial="")  # 'left' or 'right'
     correct: bool = models.BooleanField(initial=False)
     response_time: float = models.FloatField(initial=0.0)
 
@@ -94,30 +96,38 @@ def get_practice_stims() -> list[str]:
     ]
 
 
-def practice_trial_generator() -> Generator[dict[str, str | int], None, None]:
+def practice_trial_generator() -> Generator[dict[str, str | int | bool], None, None]:
     stims = get_practice_stims()
     n_practice = len(stims)
     for i in range(C.NUM_PRACTICE_TRIALS):
-        oddball = randint(0, n_practice - 1)
-        # select a random foil that is not the oddball
-        foil = randint(0, n_practice - 1)
-        while foil == oddball:
-            foil = randint(0, n_practice - 1)
+        # Select a target (always different from options)
+        target_idx = randint(0, n_practice - 1)
+        
+        # Select left and right options (different from target and each other)
+        remaining = [j for j in range(n_practice) if j != target_idx]
+        left_idx = choice(remaining)
+        remaining.remove(left_idx)
+        right_idx = choice(remaining)
+        
+        # Randomly select which option is correct
+        correct_option = 'left' if randint(0, 1) == 0 else 'right'
 
         yield {
-            "oddball": stims[oddball],
-            "foil": stims[foil],
-            "isOddball": randint(0, 1),
+            "target": stims[target_idx],
+            "left_option": stims[left_idx],
+            "right_option": stims[right_idx],
+            "correct_option": correct_option,
             "trial": i,
         }
 
 
 def get_stim_list(id: int) -> pd.DataFrame:
-    # ID = participant ID, Paradigm = 0 or 1 = order
-    stims = DataCache.get()
-    # get the stim list for this player
-    stim_list = stims[(stims["ID"] == id)]
-    return stim_list
+    return DataCache.get()
+    # # ID = participant ID, Paradigm = 0 or 1 = order
+    # stims = DataCache.get()
+    # # get the stim list for this player
+    # stim_list = stims[(stims["ID"] == id)]
+    # return stim_list
 
 
 def creating_session(subsession: Subsession) -> None:
@@ -132,8 +142,10 @@ def creating_session(subsession: Subsession) -> None:
         for _, row in stim_list.iterrows():
             Trial.create(
                 trial_id=row["trial"],
-                oddball=(C.STIM_PATH / row["oddball"]).with_suffix(".png").as_posix(),
-                foil=(C.STIM_PATH / row["foil"]).with_suffix(".png").as_posix(),
+                target=(C.STIM_PATH / row["target"]).with_suffix(".png").as_posix(),
+                left_option=(C.STIM_PATH / row["left_option"]).with_suffix(".png").as_posix(),
+                right_option=(C.STIM_PATH / row["right_option"]).with_suffix(".png").as_posix(),
+                correct_option=row["correct_option"],  # 'left' or 'right'
                 csv_order=row["order"],
                 player=p,
             )
@@ -154,7 +166,7 @@ class WelcomePage(Page):
         return player.round_number == 1
 
 
-class DiskFoilPage(Page):
+class StimuliComparisonPage(Page):
     block_id: ClassVar[int] = 1
     # only display this page on the first round
     @staticmethod
@@ -167,10 +179,11 @@ class DiskFoilPage(Page):
 
         return {
             "trial_id": trial.trial_id,
-            "oddball": trial.oddball,
-            "foil": trial.foil,
-            "num_images": C.NUM_FOILS + 1,
+            "target": trial.target,
+            "left_option": trial.left_option,
+            "right_option": trial.right_option,
             "num_trials": player.num_trials,
+            "trials_in_block": C.TRIALS_IN_BLOCK,
             "page_type": "experiment",
         }
 
@@ -191,12 +204,13 @@ class DiskFoilPage(Page):
                 response[player.id_in_group]["event"] = "start_ack"
                 trial = get_current_trial(player)
                 trial.trial_start = datetime.now().timestamp()
-            # the participant has madae a selection
+            # the participant has made a selection
             elif event == "choice":
                 trial = get_current_trial(player, update_start_time=False)
                 if trial.trial_id == int(data["trial"]):
-                    trial.response = data["choice"]
-                    trial.correct = data["isOddball"]
+                    trial.response = data["choice"]  # 'left' or 'right'
+                    # Check if the participant selected the correct option
+                    trial.correct = (data["choice"] == trial.correct_option)
                     trial.trial_end = datetime.now().timestamp()
                     trial.response_time = trial.trial_end - trial.trial_start
                     print(player.trial_id + 1, " / ", player.num_trials)
@@ -212,41 +226,55 @@ class DiskFoilPage(Page):
                 trial = get_current_trial(player)
                 response[player.id_in_group]["event"] = "trial"
                 response[player.id_in_group]["trial_id"] = trial.trial_id
-                response[player.id_in_group]["oddball"] = trial.oddball
-                response[player.id_in_group]["foil"] = trial.foil
-                response[player.id_in_group]["num_images"] = C.NUM_FOILS + 1
+                response[player.id_in_group]["target"] = trial.target
+                response[player.id_in_group]["left_option"] = trial.left_option
+                response[player.id_in_group]["right_option"] = trial.right_option
 
         return response
     
 
-class DiskFoilPageBlockTwo(DiskFoilPage):
-    template_name: str = "disks/DiskFoilPage.html"
+class StimuliComparisonPageBlockTwo(StimuliComparisonPage):
+    template_name: str = "diskcomp/StimuliComparisonPage.html"
     block_id: ClassVar[int] = 2
     @staticmethod
     def live_method(player: Player, data: dict[str, Any], block: Literal[1, 2, 3] = 2):
-        return DiskFoilPage.live_method(player, data, block)
+        return StimuliComparisonPage.live_method(player, data, block)
 
 
-class DiskFoilPageBlockThree(DiskFoilPage):
-    template_name: str = "disks/DiskFoilPage.html"
+class StimuliComparisonPageBlockThree(StimuliComparisonPage):
+    template_name: str = "diskcomp/StimuliComparisonPage.html"
     block_id: ClassVar[int] = 3
     @staticmethod
     def live_method(player: Player, data: dict[str, Any], block: Literal[1, 2, 3] = 3):
-        return DiskFoilPage.live_method(player, data, block)
+        return StimuliComparisonPage.live_method(player, data, block)
 
 class BreakPage(Page):
     pass
 
 class BreakPageTwo(BreakPage):
-    template_name: str = "disks/BreakPage.html"
+    template_name: str = "diskcomp/BreakPage.html"
+
+class PracticeInstructionsPage(Page):
+    pass
+
+
+class PracticeDone(Page):
+    pass
+
+
+class ThankYouPage(Page):
+    # only display this page on the last round
+    @staticmethod
+    def is_displayed(player: Player):
+        return player.round_number == C.NUM_ROUNDS
 
 class PracticeTrialPage(Page):
-    template_name: str = "disks/DiskFoilPage.html"
+    template_name: str = "diskcomp/StimuliComparisonPage.html"
 
     # only display this page on the first round
     @staticmethod
     def is_displayed(player: Player):
-        return player.trial_id < player.num_trials
+        return player.round_number == 1
 
     @staticmethod
     def vars_for_template(player: Player):
@@ -254,10 +282,11 @@ class PracticeTrialPage(Page):
         trial = next(practice_trials)
         return {
             "trial_id": trial["trial"],
-            "oddball": trial["oddball"],
-            "foil": trial["foil"],
-            "num_images": C.NUM_FOILS + 1,
+            "target": trial["target"],
+            "left_option": trial["left_option"],
+            "right_option": trial["right_option"],
             "num_trials": C.NUM_PRACTICE_TRIALS,
+            "trials_in_block": C.NUM_PRACTICE_TRIALS,
             "page_type": "practice",
         }
 
@@ -280,11 +309,23 @@ class PracticeTrialPage(Page):
                 trial = next(practice_trials)
                 response[player.id_in_group]["event"] = "trial"
                 response[player.id_in_group]["trial_id"] = trial["trial"]
-                response[player.id_in_group]["oddball"] = trial["oddball"]
-                response[player.id_in_group]["foil"] = trial["foil"]
-                response[player.id_in_group]["num_images"] = C.NUM_FOILS + 1
-            # the participant has madae a selection
+                response[player.id_in_group]["target"] = trial["target"]
+                response[player.id_in_group]["left_option"] = trial["left_option"]
+                response[player.id_in_group]["right_option"] = trial["right_option"]
+                response[player.id_in_group]["correct_option"] = trial["correct_option"]
+            # the participant has made a selection
             elif event == "choice":
+                # Store the response (left or right)
+                choice = data["choice"]
+                # Get the correct option from trial data
+                practice_trials = practice_trial_generator()
+                trial_data = next(practice_trials)
+                for _ in range(int(data["trial"])):
+                    trial_data = next(practice_trials)
+                    
+                # Check if correct and proceed
+                correct = (choice == trial_data["correct_option"])
+                
                 if int(data["trial"]) < C.NUM_PRACTICE_TRIALS - 1:
                     response[player.id_in_group]["trial_id"] = data["trial"]
                     response[player.id_in_group]["event"] = "next"
@@ -300,26 +341,12 @@ class PracticeTrialPage(Page):
                 else:
                     response[player.id_in_group]["trial_id"] = trial["trial"]
                 response[player.id_in_group]["event"] = "trial"
-                response[player.id_in_group]["oddball"] = trial["oddball"]
-                response[player.id_in_group]["foil"] = trial["foil"]
-                response[player.id_in_group]["num_images"] = C.NUM_FOILS + 1
+                response[player.id_in_group]["target"] = trial["target"]
+                response[player.id_in_group]["left_option"] = trial["left_option"]
+                response[player.id_in_group]["right_option"] = trial["right_option"]
+                response[player.id_in_group]["correct_option"] = trial["correct_option"]
 
         return response
-
-
-class PracticeInstructionsPage(Page):
-    pass
-
-
-class PracticeDone(Page):
-    pass
-
-
-class ThankYouPage(Page):
-    # only display this page on the last round
-    @staticmethod
-    def is_displayed(player: Player):
-        return player.round_number == C.NUM_ROUNDS
 
 
 page_sequence = [
@@ -327,14 +354,13 @@ page_sequence = [
     PracticeInstructionsPage,
     PracticeTrialPage,
     PracticeDone,
-    DiskFoilPage,
+    StimuliComparisonPage,
     BreakPage,
-    DiskFoilPageBlockTwo,
+    StimuliComparisonPageBlockTwo,
     BreakPageTwo,
-    DiskFoilPageBlockThree,
+    StimuliComparisonPageBlockThree,
     ThankYouPage,
 ]
-
 
 
 def custom_export(players: list[Player]) -> Generator[list[str | int | float | bool], Any, Any]:
@@ -343,8 +369,10 @@ def custom_export(players: list[Player]) -> Generator[list[str | int | float | b
         "participant_code",
         "participant_label",
         "trial_id",
-        "oddball",
-        "foil",
+        "target",
+        "left_option",
+        "right_option",
+        "correct_option",
         "csv_order",
         "response",
         "correct",
@@ -358,8 +386,10 @@ def custom_export(players: list[Player]) -> Generator[list[str | int | float | b
                 player.participant.code,
                 player.participant.label or "",
                 trial.trial_id,
-                trial.oddball,
-                trial.foil,
+                trial.target,
+                trial.left_option,
+                trial.right_option,
+                trial.correct_option,
                 trial.csv_order,
                 trial.response,
                 trial.correct,
