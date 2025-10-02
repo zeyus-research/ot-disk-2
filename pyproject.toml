@@ -1,0 +1,11 @@
+[project]
+name = "ot-disk-2"
+version = "0.1.0"
+description = "Disk experiment 2"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "otree",
+    "psycopg2-binary",
+    "pandas"
+]
