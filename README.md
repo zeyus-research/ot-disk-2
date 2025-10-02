@@ -8,7 +8,7 @@ To test it out you simply need to run `otree devserver`
 
 ## UV instead of pip / global python
 
-This project uses `uv` to manage the python environment. You can install it easily following the instructions on [https://github.com/astral-sh/uv?tab=readme-ov-file#installation])(the uv github page).
+This project uses `uv` to manage the python environment. You can install it easily following the instructions on [the uv github page])(https://github.com/astral-sh/uv?tab=readme-ov-file#installation).
 
 To initially setup the project, run `uv sync` which makes sure all the requirements are installed in the uv environment.
 
