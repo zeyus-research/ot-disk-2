@@ -5,6 +5,7 @@ SESSION_CONFIGS: list[dict] = [
         name='diskcomp',
         app_sequence=['diskcomp'],
         num_demo_participants=1,
+        participant_timeout_mins = 60,
     ),
 ]
 
