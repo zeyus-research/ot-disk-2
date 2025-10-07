@@ -1,3 +1,9 @@
+{{ block app_styles }}
+    {# prefetch (inconsistent): <link rel="prefetch" as="image" fetchpriority="high"  type="image/png" crossorigin href="{{ static image_preload }}" /> #}
+    {# preload: <link rel="preload" as="image" fetchpriority="high" type="image/png" href="{{ static image_preload }}" crossorigin /> #}
+    {% for image_preload in image_preloads %}<link rel="preload" as="image" fetchpriority="low" type="image/png" href="{{ static image_preload }}" crossorigin />
+    {% endfor %}
+{{ endblock }}
 {{ block content }}
 <style>
     .choices > div {
@@ -357,6 +363,17 @@
                 ctx.stroke();
             }
 
+            function drawPleaseWaitText() {
+                ctx.font = '20px Arial';
+                ctx.fillStyle = 'black';
+                const text = 'Please wait...';
+                const textWidth = ctx.measureText(text).width;
+                const textHeight = ctx.measureText('W').width;
+                const vOffset = Math.floor(textHeight / 2);
+                console.log(vOffset);
+                ctx.fillText(text, canvas.width / 2 - textWidth / 2, canvas.height / 2 + vOffset);
+            }
+
             function cursorInTarget() {
                 for (let i = 0; i < targetCenters.length; i++) {
                     const target = targetCenters[i];
@@ -496,9 +513,12 @@
                         // start with a 1 second delay
                         // to avoid participants flying through all the trials
                         updateTrial();
+                        clearCanvas();
+                        pleaseWait.style.display = 'block';
                         sleep(1000).then(() => {
                             clearCanvas();
                             drawContinueButton();
+                            pleaseWait.style.display = 'none';
                             canvas.addEventListener("click", () => {
                                 startTrial();
                             }, { once: true });
