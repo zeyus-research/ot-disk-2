@@ -43,11 +43,16 @@ class C(BaseConstants):
     TRIALS_IN_BLOCK: int = 100
     TOTAL_TRIALS: int = 400
     NUM_BLOCKS: int = 4
-    
-    # Timeout in minutes - if a participant doesn't complete within this time,
-    # their trial set becomes available for reassignment
+
+    # Primary timeout: minimum time before a trial set can be considered for abandonment
     TRIAL_SET_TIMEOUT_MINUTES: int = 60
-    
+
+    # Inactivity timeout: if no response for this many minutes, consider participant inactive
+    # Trial set is only abandoned if BOTH conditions are met:
+    # 1. Time since lock > TRIAL_SET_TIMEOUT_MINUTES
+    # 2. Time since last response > INACTIVITY_TIMEOUT_MINUTES
+    INACTIVITY_TIMEOUT_MINUTES: int = 5
+
     # Optional: List of specific trial set IDs to load
     # If empty, all trial sets from CSV will be loaded
     TRIAL_SETS_TO_LOAD: list[int] = []
@@ -80,44 +85,91 @@ class Group(BaseGroup, metaclass=AnnotationFreeMeta):
 class TrialSet(ExtraModel, metaclass=AnnotationFreeMeta):
     """Represents a set of trials (originally mapped to a participant_id in CSV)"""
     set_id: int = models.IntegerField()
+    repeat_id: int = models.IntegerField(initial=0)  # 0 for original, 1+ for retries after timeout
     locked_by_participant: str = models.StringField(blank=True)
     lock_time: float = models.FloatField(initial=0.0)
+    last_response_time: float = models.FloatField(initial=0.0)  # Updated each time participant responds
     completed: bool = models.BooleanField(initial=False)
+    abandoned: bool = models.BooleanField(initial=False)  # True if timed out/incomplete
     subsession: BaseSubsession = models.Link(Subsession)
     current_trial: int = models.IntegerField(initial=0)
+    participant: Participant | None = models.Link(Participant)
     
     @classmethod
     def get_available_set(cls, subsession: BaseSubsession) -> 'TrialSet | None':
         """Find an available trial set (unlocked, timed out, or not completed)"""
-        all_sets = cls.filter(subsession=subsession, completed=False)
+        all_sets = cls.filter(subsession=subsession, completed=False, abandoned=False)
         timeout_seconds = C.TRIAL_SET_TIMEOUT_MINUTES * 60
+        inactivity_seconds = C.INACTIVITY_TIMEOUT_MINUTES * 60
         current_time = datetime.now().timestamp()
-        
+
         for trial_set in all_sets:
             # Check if unlocked
             if not trial_set.locked_by_participant:
                 return trial_set
-            
-            # Check if timed out
+
+            # Check if timed out - requires BOTH conditions:
+            # 1. Total time since lock exceeds primary timeout
+            # 2. No response activity within inactivity timeout
             if trial_set.lock_time > 0:
-                elapsed = current_time - trial_set.lock_time
-                if elapsed > timeout_seconds:
-                    # Timeout - release the lock
-                    trial_set.locked_by_participant = ""
-                    trial_set.lock_time = 0.0
-                    return trial_set
-        
+                time_since_lock = current_time - trial_set.lock_time
+
+                # Check primary timeout
+                if time_since_lock > timeout_seconds:
+                    # Check inactivity timeout
+                    # Use last_response_time if set, otherwise fall back to lock_time
+                    last_activity = trial_set.last_response_time if trial_set.last_response_time > 0 else trial_set.lock_time
+                    time_since_last_response = current_time - last_activity
+
+                    if time_since_last_response > inactivity_seconds:
+                        # Both conditions met - mark as abandoned and create retry
+                        trial_set.abandoned = True
+                        trial_set.locked_by_participant = ""
+
+                        print(f"Abandoning trial set {trial_set.set_id} (repeat {trial_set.repeat_id}): "
+                              f"locked for {time_since_lock/60:.1f}min, "
+                              f"inactive for {time_since_last_response/60:.1f}min")
+
+                        # Create a new trial set with incremented repeat_id
+                        new_trial_set = cls._create_retry_trial_set(subsession, trial_set)
+                        return new_trial_set
+
         return None
+
+    @classmethod
+    def _create_retry_trial_set(cls, subsession: BaseSubsession, original_set: 'TrialSet') -> 'TrialSet':
+        """Create a copy of a trial set for retry after timeout"""
+        # Create new trial set with incremented repeat_id
+        new_trial_set = cls.create(
+            set_id=original_set.set_id,
+            repeat_id=original_set.repeat_id + 1,
+            subsession=subsession,
+        )
+
+        # Copy all trials from the original set to the new set
+        original_trials = Trial.filter(trial_set=original_set)
+        for original_trial in original_trials:
+            Trial.create(
+                trial_id=original_trial.trial_id,
+                target=original_trial.target,
+                option_a=original_trial.option_a,
+                option_b=original_trial.option_b,
+                csv_order=original_trial.csv_order,
+                trial_set=new_trial_set,
+            )
+
+        print(f"Created retry trial set: set_id={new_trial_set.set_id}, repeat_id={new_trial_set.repeat_id}")
+        return new_trial_set
     
-    def lock_for_participant(self, participant_code: str):
+    def lock_for_participant(self, participant: Participant):
         """Lock this trial set for a specific participant"""
-        self.locked_by_participant = participant_code
+        self.locked_by_participant = participant.code
+        self.participant = participant
         self.lock_time = datetime.now().timestamp()
     
     def unlock(self):
         """Release the lock on this trial set"""
-        self.locked_by_participant = ""
-        self.lock_time = 0.0
+        # noop, it is marked as completed or abandoned elsewhere
 
 
 class Player(BasePlayer, metaclass=AnnotationFreeMeta):
@@ -142,7 +194,7 @@ class Player(BasePlayer, metaclass=AnnotationFreeMeta):
         
         trial_set = TrialSet.get_available_set(self.subsession)
         if trial_set:
-            trial_set.lock_for_participant(self.participant.code)
+            trial_set.lock_for_participant(self.participant)
             self.assigned_trial_set_id = trial_set.set_id
             return trial_set
         
@@ -346,21 +398,30 @@ class StimuliComparisonPage(Page):
             elif event == "choice":
                 trial = get_current_trial(player, update_start_time=False)
                 if trial and trial.trial_id == int(data["trial"]):
+                    # Record trial response data
+                    current_time = datetime.now().timestamp()
+
                     # Convert 'left' or 'right' to 'option_a' or 'option_b'
                     if data["choice"] == "left":
-                        trial.response = trial.displayed_left
+                        chosen_option = trial.displayed_left
                     else:  # 'right'
-                        trial.response = "option_a" if trial.displayed_left == "option_b" else "option_b"
-                    
-                    trial.trial_end = datetime.now().timestamp()
-                    trial.response_time = trial.trial_end - trial.trial_start
+                        chosen_option = "option_a" if trial.displayed_left == "option_b" else "option_b"
+
+                    # Set all fields at once to ensure they're persisted together
+                    trial.response = chosen_option
+                    trial.trial_end = current_time
+                    trial.response_time = current_time - trial.trial_start
                     trial.participant_code = player.participant.code
-                    
-                    print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, " 
-                          f"RT: {trial.response_time:.2f}s, Response: {trial.response}")
-                    
+
+                    # Update trial set's last response time to track activity
+                    trial_set.last_response_time = current_time
+
+                    print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, "
+                          f"RT: {trial.response_time:.2f}s, Response: {trial.response}, "
+                          f"Saved: response={trial.response}, rt={trial.response_time}")
+
                     trial_set.current_trial += 1
-                    
+
                     if trial_set.current_trial < block * C.TRIALS_IN_BLOCK:
                         response[player.id_in_group]["event"] = "next"
                     else:
@@ -485,6 +546,7 @@ class PracticeTrialPage(Page):
             "num_trials": C.NUM_PRACTICE_TRIALS,
             "trials_in_block": C.NUM_PRACTICE_TRIALS,
             "page_type": "practice",
+            "image_preloads": DataCache.get_image_file_list(),
         }
 
     @staticmethod
@@ -546,38 +608,79 @@ page_sequence = [
 ]
 
 
-def custom_export(players: list[Player]) -> Generator[list[str | int | float | bool], Any, Any]:
-    """Export trial data with trial set information"""
+def extract_stimulus_id(file_path: str) -> str:
+    """Extract stimulus ID from file path (e.g., 'stimuli/93b_...' -> '93b')"""
+    if not file_path:
+        return ""
+    filename = Path(file_path).name
+    # Extract the ID (first part before underscore or extension)
+    return filename.split("_")[0].split(".")[0]
+
+
+def custom_export(players: list[Player]) -> Generator[list[str | int | float | bool | str], Any, Any]:
+    """Export trial data with trial set information - includes all trials even from incomplete sessions"""
     yield [
         "participant_code",
         "participant_label",
         "trial_set_id",
+        "repeat_id",
+        "trial_set_completed",
+        "trial_set_abandoned",
         "trial_id",
-        "target",
-        "option_a",
-        "option_b",
-        "displayed_left",
-        "response",
+        "target_stimulus",
+        "option_a_stimulus",
+        "option_b_stimulus",
+        "displayed_left_stimulus",
+        "displayed_right_stimulus",
+        "response_stimulus",
         "response_time",
-        "completed_by_participant",
     ]
-    
+
+    # Export ALL trial sets (including abandoned ones) to preserve all data
     all_trial_sets = TrialSet.filter()
     for trial_set in all_trial_sets:
         for trial in Trial.filter(trial_set=trial_set):
-            participant_code = trial.participant_code or ""
-            participant_label = ""
-            
+            # Only export trials that have been answered (have a response recorded)
+            if not trial.response or not trial.participant_code:
+                continue
+
+            participant_code = trial.participant_code
+            participant_label = trial_set.participant.label if trial_set.participant else "UNKNOWN"
+
+            # Extract stimulus IDs from file paths
+            target_id = extract_stimulus_id(trial.target)
+            option_a_id = extract_stimulus_id(trial.option_a)
+            option_b_id = extract_stimulus_id(trial.option_b)
+
+            # Determine which stimulus was displayed on left/right
+            if trial.displayed_left == "option_a":
+                displayed_left = option_a_id
+                displayed_right = option_b_id
+            else:
+                displayed_left = option_b_id
+                displayed_right = option_a_id
+
+            # Convert response to stimulus ID
+            if trial.response == "option_a":
+                response_stimulus = option_a_id
+            elif trial.response == "option_b":
+                response_stimulus = option_b_id
+            else:
+                response_stimulus = trial.response
+
             yield [
                 participant_code,
                 participant_label,
                 trial_set.set_id,
+                trial_set.repeat_id,
+                trial_set.completed,
+                trial_set.abandoned,
                 trial.trial_id,
-                trial.target,
-                trial.option_a,
-                trial.option_b,
-                trial.displayed_left,
-                trial.response,
+                target_id,
+                option_a_id,
+                option_b_id,
+                displayed_left,
+                displayed_right,
+                response_stimulus,
                 trial.response_time,
-                trial.participant_code,
             ]

@@ -8,7 +8,7 @@ SESSION_CONFIGS: list[dict] = [
         participant_timeout_mins = 60,
     ),
 ]
-
+# @TODO: ADD ROOM CONFIG
 # if you set a property in SESSION_CONFIG_DEFAULTS, it will be inherited by all configs
 # in SESSION_CONFIGS, except those that explicitly override it.
 # the session config can be accessed from methods in your apps as self.session.config,
@@ -17,6 +17,13 @@ SESSION_CONFIGS: list[dict] = [
 SESSION_CONFIG_DEFAULTS: dict = dict(
     real_world_currency_per_point=1.00, participation_fee=0.00, doc=""
 )
+
+ROOMS = [
+    dict(
+        name='DiskMatch',
+        display_name='The Disk Match To Sample Experiment',
+    ),
+]
 
 PARTICIPANT_FIELDS: list[str] = []
 SESSION_FIELDS: list[str] = []
