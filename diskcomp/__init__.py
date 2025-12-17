@@ -94,8 +94,8 @@ class DataCache:
         # trying to find all att check stimuli files
         if os.path.exists(stim_path):
             files = sorted([f for f in os.listdir(stim_path) if f.endswith((".png"))])
-            print(f"Found {len(files)} attention check stimulus files.")
-            print(f"Files: {files}")
+            #print(f"Found {len(files)} attention check stimulus files.")
+            #print(f"Files: {files}")
             for i in range(0, len(files), 3):
                 if i + 2 < len(files): 
                     attention_checks.append((
@@ -103,8 +103,8 @@ class DataCache:
                         ( Path("stimuli/att_checks") / files[i+1]).as_posix(),
                         ( Path("stimuli/att_checks") / files[i+2]).as_posix()
                     ))
-            print(attention_checks)
-            print(f"Found {len(attention_checks)} attention check stimuli sets.")
+            #print(attention_checks)
+            #print(f"Found {len(attention_checks)} attention check stimuli sets.")
         else: 
             print(f"Attention check stimulus path does not exist: {stim_path}")
         return attention_checks
@@ -161,9 +161,9 @@ class TrialSet(ExtraModel, metaclass=AnnotationFreeMeta):
                         trial_set.abandoned = True
                         trial_set.locked_by_participant = ""
 
-                        print(f"Abandoning trial set {trial_set.set_id} (repeat {trial_set.repeat_id}): "
-                              f"locked for {time_since_lock/60:.1f}min, "
-                              f"inactive for {time_since_last_response/60:.1f}min")
+                        #print(f"Abandoning trial set {trial_set.set_id} (repeat {trial_set.repeat_id}): "
+                        #      f"locked for {time_since_lock/60:.1f}min, "
+                        #      f"inactive for {time_since_last_response/60:.1f}min")
 
                         # Create a new trial set with incremented repeat_id
                         new_trial_set = cls._create_retry_trial_set(subsession, trial_set)
@@ -193,7 +193,7 @@ class TrialSet(ExtraModel, metaclass=AnnotationFreeMeta):
                 trial_set=new_trial_set,
             )
 
-        print(f"Created retry trial set: set_id={new_trial_set.set_id}, repeat_id={new_trial_set.repeat_id}")
+        #print(f"Created retry trial set: set_id={new_trial_set.set_id}, repeat_id={new_trial_set.repeat_id}")
         return new_trial_set
     
     def lock_for_participant(self, participant: Participant):
@@ -318,7 +318,7 @@ def creating_session(subsession: Subsession) -> None:
     else:
         trial_set_ids = stims["participant_id"].unique().tolist()
     
-    print(f"Loading {len(trial_set_ids)} trial sets")
+    #print(f"Loading {len(trial_set_ids)} trial sets")
     
     # Create TrialSet entities
     for set_id in trial_set_ids:
@@ -345,7 +345,7 @@ def creating_session(subsession: Subsession) -> None:
             )
     
     attention_check_stims = DataCache.get_attention_check_stims()
-    print(f"Loaded {len(attention_check_stims)} attention check stimulus sets")
+    #print(f"Loaded {len(attention_check_stims)} attention check stimulus sets")
 
     if attention_check_stims:
         for set_id in trial_set_ids: 
@@ -360,7 +360,7 @@ def creating_session(subsession: Subsession) -> None:
                     position = int((check_num + 1) * C.TRIALS_IN_BLOCK / (C.ATTENTION_CHECKS_PER_BLOCK + 1))
                     positions.append(position)
                 
-                print(f"Block {block}: Creating {len(positions)} attention checks at positions {positions}")
+                #print(f"Block {block}: Creating {len(positions)} attention checks at positions {positions}")
                 
                 for check_num, position in enumerate(positions):
                     # cycle through available attention check stimuli
@@ -376,10 +376,10 @@ def creating_session(subsession: Subsession) -> None:
                         incorrect_option=incorrect,
                         trial_set=trial_set,
                     )
-                    print(f"   Created check_id={check_id}, block={block}, position={position}")
+                    #print(f"   Created check_id={check_id}, block={block}, position={position}")
                     check_id += 1
             
-            print(f"Total: {check_id} attention checks created (shared across all trial sets)")
+            #print(f"Total: {check_id} attention checks created (shared across all trial sets)")
     else:
         print("WARNING: No attention check stimuli found!")
 
@@ -547,7 +547,7 @@ class StimuliComparisonPage(Page):
 
                         trial_set.last_response_time = current_time
 
-                        print(f"attention check (block {block_num}, pos {trials_in_current_block}): {'PASSED' if attention_check.passed else 'FAILED'}")
+                        #print(f"attention check (block {block_num}, pos {trials_in_current_block}): {'PASSED' if attention_check.passed else 'FAILED'}")
 
                     #" continue with next trial (don't increment trial counter for attention checks)"
                     response[player.id_in_group]["event"] = "next"
@@ -570,9 +570,9 @@ class StimuliComparisonPage(Page):
 
                         trial_set.last_response_time = current_time
 
-                        print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, "
-                              f"RT: {trial.response_time:.2f}s, Response: {trial.response}, "
-                              f"Saved: response={trial.response}, rt={trial.response_time}")    
+                        #print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, "
+                        #      f"RT: {trial.response_time:.2f}s, Response: {trial.response}, "
+                        #      f"Saved: response={trial.response}, rt={trial.response_time}")    
                         
                         
                         trial_set.current_trial += 1
@@ -586,11 +586,11 @@ class StimuliComparisonPage(Page):
                 # First check if we should show an attention check
                 block_num = block
                 trials_in_current_block = trial_set.current_trial % C.TRIALS_IN_BLOCK
-                print(f"Checking for attention check at block {block_num}, position {trials_in_current_block}")
+                #print(f"Checking for attention check at block {block_num}, position {trials_in_current_block}")
                 attention_check = get_attention_check_for_position(player, block_num, trials_in_current_block)
 
                 if attention_check:
-                    print(f"FOUND attention check (check_id={attention_check.check_id}) at block {block_num}, position {trials_in_current_block}")
+                    #print(f"FOUND attention check (check_id={attention_check.check_id}) at block {block_num}, position {trials_in_current_block}")
 
                     # mark as shown and start the trial
                     attention_check.already_shown = True
@@ -613,7 +613,7 @@ class StimuliComparisonPage(Page):
                     response[player.id_in_group]["right_option"] = right_option
 
                 else:
-                    print("No attention check at this position, showing regular trial")
+                    #print("No attention check at this position, showing regular trial")
                     # Show regular trial
                     trial = get_current_trial(player)
                     if trial:
@@ -830,7 +830,7 @@ def custom_export(players: list[Player]) -> Generator[list[str | int | float | b
     # This interleaves trials and attention checks exactly as they occurred
     all_events = sorted(trials + checks, key=lambda x: x.trial_end)
 
-    print(f"Exporting {len(all_events)} total events ({len(trials)} trials, {len(checks)} checks)")
+    #print(f"Exporting {len(all_events)} total events ({len(trials)} trials, {len(checks)} checks)")
 
     for event in all_events:
         # Common attributes
