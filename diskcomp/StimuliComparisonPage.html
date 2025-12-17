@@ -285,7 +285,8 @@
                         event: 'choice', 
                         trial: trial.value, 
                         choice: inTarget.position,
-                        correct: inTarget.correct 
+                        correct: inTarget.correct,
+                        is_attention_check: pageType.value === 'attention_check'
                     });
                 }
             }
@@ -498,6 +499,33 @@
                         // show result, then request next trial
                         console.log('next trial, current: ', trial_id);
                         liveSend({ event: 'next', trial: trial_id });
+                        break;
+                    case 'attention_check':
+                        // Handle attention check - same as regular trial
+                        console.log('Displaying attention check');
+                        trial.value = data.check_id;
+                        target.value = data.target;
+                        leftOption.value = data.left_option;
+                        rightOption.value = data.right_option;
+                        pageType.value = 'attention_check';
+                        
+                        trialInfo.innerHTML = 'Attention Check'; // Silent
+                        
+                        // Load images (same as updateTrial)
+                        targetImg.src = "/static/" + target.value;
+                        leftOptionImg.src = "/static/" + leftOption.value;
+                        rightOptionImg.src = "/static/" + rightOption.value;
+                        
+                        clearCanvas();
+                        pleaseWait.style.display = 'block';
+                        sleep(1000).then(() => {
+                            clearCanvas();
+                            drawContinueButton();
+                            pleaseWait.style.display = 'none';
+                            canvas.addEventListener("click", () => {
+                                startTrial();
+                            }, { once: true });
+                        });
                         break;
                     case 'trial':
                         // update the trial

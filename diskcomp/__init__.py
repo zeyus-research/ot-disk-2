@@ -15,6 +15,7 @@ from typing import ClassVar, Generator, Any, Literal
 from pathlib import Path
 import pandas as pd
 from collections import defaultdict
+import os
 
 doc = """
 Stimulus comparison study with trial set pooling
@@ -57,6 +58,11 @@ class C(BaseConstants):
     # If empty, all trial sets from CSV will be loaded
     TRIAL_SETS_TO_LOAD: list[int] = []
 
+    # Add attention checks (amount per block)
+    ATTENTION_CHECKS_PER_BLOCK: int = 2
+    # Path to the stimuli (made a new folder specifacally for them)
+    ATTENTION_CHECK_STIM_PATH: Path = Path("diskcomp/static/stimuli/att_checks")
+
 
 class DataCache:
     cache: pd.DataFrame | None = None
@@ -74,6 +80,34 @@ class DataCache:
             image_df = pd.read_csv(C.STIM_IMAGE_CSV)
             cls.image_file_list = image_df["filename"].map(lambda x: (C.STIM_PATH / x).as_posix()).tolist()
         return cls.image_file_list
+    
+    # get attention check stimuli
+    @classmethod
+    def get_attention_check_stims(cls) -> list[tuple[str, str, str]]:
+        """ Get attetnion check stimuli (target, correct, incorrect option)
+        Returns list of tuples with paths to attention check images
+        """
+        stim_path = C.ATTENTION_CHECK_STIM_PATH
+        # format: target, identical_match, different_match
+        attention_checks = []
+
+        # trying to find all att check stimuli files
+        if os.path.exists(stim_path):
+            files = sorted([f for f in os.listdir(stim_path) if f.endswith((".png"))])
+            print(f"Found {len(files)} attention check stimulus files.")
+            print(f"Files: {files}")
+            for i in range(0, len(files), 3):
+                if i + 2 < len(files): 
+                    attention_checks.append((
+                        ( Path("stimuli/att_checks") / files[i]).as_posix(),
+                        ( Path("stimuli/att_checks") / files[i+1]).as_posix(),
+                        ( Path("stimuli/att_checks") / files[i+2]).as_posix()
+                    ))
+            print(attention_checks)
+            print(f"Found {len(attention_checks)} attention check stimuli sets.")
+        else: 
+            print(f"Attention check stimulus path does not exist: {stim_path}")
+        return attention_checks
     
 
 class Subsession(BaseSubsession, metaclass=AnnotationFreeMeta):
@@ -172,6 +206,24 @@ class TrialSet(ExtraModel, metaclass=AnnotationFreeMeta):
         """Release the lock on this trial set"""
         # noop, it is marked as completed or abandoned elsewhere
 
+
+class AttentionCheck(ExtraModel, metaclass=AnnotationFreeMeta):
+    """ Represents an attention check trial"""
+    check_id: int = models.IntegerField() #which attention check
+    block: int = models.IntegerField() #which block
+    position_in_block: int = models.IntegerField() #position within block
+    target: str = models.StringField()
+    correct_option: str = models.StringField()
+    incorrect_option: str = models.StringField()
+    trial_set: TrialSet = models.Link(TrialSet)
+    trial_start: float = models.FloatField(initial=0.0)
+    trial_end: float = models.FloatField(initial=0.0)
+    response: str = models.StringField(initial="") # correct or incorrect
+    displayed_left: str = models.StringField(initial="")
+    response_time: float = models.FloatField(initial=0.0)
+    participant_code: str = models.StringField(blank=True)
+    passed: bool = models.BooleanField(initial=False)
+    already_shown: bool = models.BooleanField(initial=False) # track if shown already
 
 class Player(BasePlayer, metaclass=AnnotationFreeMeta):
     assigned_trial_set_id: int = models.IntegerField(initial=-1)
@@ -292,8 +344,48 @@ def creating_session(subsession: Subsession) -> None:
                 trial_set=trial_set,
             )
     
+    attention_check_stims = DataCache.get_attention_check_stims()
+    print(f"Loaded {len(attention_check_stims)} attention check stimulus sets")
+
+    if attention_check_stims:
+        for set_id in trial_set_ids: 
+            trial_set = TrialSet.filter(subsession=subsession, set_id=set_id)[0]
+            check_id = 0
+        
+            for block in range(1, C.NUM_BLOCKS + 1):
+                # Evenly space attention checks throughout the block
+                positions = []
+                for check_num in range(C.ATTENTION_CHECKS_PER_BLOCK):
+                    # Divide block into equal segments
+                    position = int((check_num + 1) * C.TRIALS_IN_BLOCK / (C.ATTENTION_CHECKS_PER_BLOCK + 1))
+                    positions.append(position)
+                
+                print(f"Block {block}: Creating {len(positions)} attention checks at positions {positions}")
+                
+                for check_num, position in enumerate(positions):
+                    # cycle through available attention check stimuli
+                    stim_idx = check_id % len(attention_check_stims)
+                    target, correct, incorrect = attention_check_stims[stim_idx]
+
+                    AttentionCheck.create(
+                        check_id=check_id,
+                        block=block,
+                        position_in_block=position,
+                        target=target,
+                        correct_option=correct,
+                        incorrect_option=incorrect,
+                        trial_set=trial_set,
+                    )
+                    print(f"   Created check_id={check_id}, block={block}, position={position}")
+                    check_id += 1
+            
+            print(f"Total: {check_id} attention checks created (shared across all trial sets)")
+    else:
+        print("WARNING: No attention check stimuli found!")
+
     for p in subsession.get_players():
         p.num_trials = C.TOTAL_TRIALS
+
 
 
 def get_current_trial(player: Player, *, update_start_time: bool = True) -> Trial | None:
@@ -311,6 +403,22 @@ def get_current_trial(player: Player, *, update_start_time: bool = True) -> Tria
         t.trial_start = datetime.now().timestamp()
     return t
 
+def get_attention_check_for_position(player: Player, block: int, trials_completed_in_block: int) -> AttentionCheck | None:
+    """ Check if there is an attention check at the current position in the block"""
+    trial_set = player.get_assigned_trial_set()
+    if not trial_set: 
+        return None
+    
+    checks = AttentionCheck.filter(
+        trial_set=trial_set,
+        block=block, 
+        position_in_block=trials_completed_in_block,
+        already_shown=False # only get checks that have not been shown yet
+    )
+
+    if checks: 
+        return checks[0]
+    return None
 
 def determine_display_positions(trial: Trial) -> tuple[str, str, str]:
     """
@@ -402,51 +510,123 @@ class StimuliComparisonPage(Page):
                     trial.trial_start = datetime.now().timestamp()
                     
             elif event == "choice":
-                trial = get_current_trial(player, update_start_time=False)
-                if trial and trial.trial_id == int(data["trial"]):
-                    # Record trial response data
-                    current_time = datetime.now().timestamp()
+                # Check if this was an attention check
+                #trial_set = player.get_assigned_trial_set()
+                block_num = block
+                trials_in_current_block = trial_set.current_trial % C.TRIALS_IN_BLOCK
+                
+                # check data from frontend
+                is_att_check = data.get("is_attention_check", False)
 
-                    # Convert 'left' or 'right' to 'option_a' or 'option_b'
-                    if data["choice"] == "left":
-                        chosen_option = trial.displayed_left
-                    else:  # 'right'
-                        chosen_option = "option_a" if trial.displayed_left == "option_b" else "option_b"
+                if is_att_check:
+                    # this is an attention check response
+                    # find the attention check that was just shown
+                    checks = AttentionCheck.filter(
+                        trial_set=trial_set,
+                        block=block_num, 
+                        position_in_block=trials_in_current_block,
+                        already_shown=True,  # It was already shown
+                        response=""  # But not yet answered
+                    )
 
-                    # Set all fields at once to ensure they're persisted together
-                    trial.response = chosen_option
-                    trial.trial_end = current_time
-                    trial.response_time = current_time - trial.trial_start
-                    trial.participant_code = player.participant.code
+                    if checks: 
+                        attention_check = checks[0]
+                        current_time = datetime.now().timestamp()
 
-                    # Update trial set's last response time to track activity
-                    trial_set.last_response_time = current_time
+                        # determine if response was correct
+                        if data["choice"] == "left":
+                            chosen = attention_check.displayed_left
+                        else:
+                            chosen = "incorrect" if attention_check.displayed_left == "correct" else "correct"
 
-                    print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, "
-                          f"RT: {trial.response_time:.2f}s, Response: {trial.response}, "
-                          f"Saved: response={trial.response}, rt={trial.response_time}")
+                        attention_check.response = chosen
+                        attention_check.trial_end = current_time
+                        attention_check.response_time = current_time - attention_check.trial_start
+                        attention_check.participant_code = player.participant.code
+                        attention_check.passed = (chosen == "correct")
 
-                    trial_set.current_trial += 1
+                        trial_set.last_response_time = current_time
 
-                    if trial_set.current_trial < block * C.TRIALS_IN_BLOCK:
-                        response[player.id_in_group]["event"] = "next"
-                    else:
-                        response[player.id_in_group]["event"] = "end"
+                        print(f"attention check (block {block_num}, pos {trials_in_current_block}): {'PASSED' if attention_check.passed else 'FAILED'}")
 
+                    #" continue with next trial (don't increment trial counter for attention checks)"
+                    response[player.id_in_group]["event"] = "next"
+                
+                else:
+                    #regular trial handling
+                    trial = get_current_trial(player, update_start_time=False)
+                    if trial and trial.trial_id == int(data["trial"]):
+                        current_time = datetime.now().timestamp()
+
+                        if data["choice"] == "left":
+                            chosen_option = trial.displayed_left
+                        else:
+                            chosen_option = "option_a" if trial.displayed_left == "option_b" else "option_b"
+
+                        trial.response = chosen_option
+                        trial.trial_end = current_time
+                        trial.response_time = current_time - trial.trial_start
+                        trial.participant_code = player.participant.code
+
+                        trial_set.last_response_time = current_time
+
+                        print(f"Trial {trial_set.current_trial + 1} / {C.TOTAL_TRIALS}, "
+                              f"RT: {trial.response_time:.2f}s, Response: {trial.response}, "
+                              f"Saved: response={trial.response}, rt={trial.response_time}")    
+                        
+                        
+                        trial_set.current_trial += 1
+
+                        if trial_set.current_trial < block * C.TRIALS_IN_BLOCK:
+                            response[player.id_in_group]["event"] = "next"
+                        else:
+                            response[player.id_in_group]["event"] = "end"
+                
             elif event == "next":
-                trial = get_current_trial(player)
-                if trial:
-                    left_option, right_option, displayed_left = determine_display_positions(trial)
-                    trial.displayed_left = displayed_left
-                    
-                    response[player.id_in_group]["event"] = "trial"
-                    response[player.id_in_group]["trial_id"] = trial.trial_id
-                    response[player.id_in_group]["target"] = trial.target
+                # First check if we should show an attention check
+                block_num = block
+                trials_in_current_block = trial_set.current_trial % C.TRIALS_IN_BLOCK
+                print(f"Checking for attention check at block {block_num}, position {trials_in_current_block}")
+                attention_check = get_attention_check_for_position(player, block_num, trials_in_current_block)
+
+                if attention_check:
+                    print(f"FOUND attention check (check_id={attention_check.check_id}) at block {block_num}, position {trials_in_current_block}")
+
+                    # mark as shown and start the trial
+                    attention_check.already_shown = True
+                    attention_check.trial_start = datetime.now().timestamp()
+
+                    # Randomize left/right display
+                    if randint(0, 1) == 0:
+                        left_option = attention_check.correct_option
+                        right_option = attention_check.incorrect_option
+                        attention_check.displayed_left = "correct"
+                    else:
+                        left_option = attention_check.incorrect_option
+                        right_option = attention_check.correct_option
+                        attention_check.displayed_left = "incorrect"
+
+                    response[player.id_in_group]["event"] = "attention_check"
+                    response[player.id_in_group]["check_id"] = attention_check.check_id
+                    response[player.id_in_group]["target"] = attention_check.target
                     response[player.id_in_group]["left_option"] = left_option
                     response[player.id_in_group]["right_option"] = right_option
 
+                else:
+                    print("No attention check at this position, showing regular trial")
+                    # Show regular trial
+                    trial = get_current_trial(player)
+                    if trial:
+                        left_option, right_option, displayed_left = determine_display_positions(trial)
+                        trial.displayed_left = displayed_left
+                        
+                        response[player.id_in_group]["event"] = "trial"
+                        response[player.id_in_group]["trial_id"] = trial.trial_id
+                        response[player.id_in_group]["target"] = trial.target
+                        response[player.id_in_group]["left_option"] = left_option
+                        response[player.id_in_group]["right_option"] = right_option
         return response
-
+        
 
 class StimuliComparisonPageBlockTwo(StimuliComparisonPage):
     template_name: str = "diskcomp/StimuliComparisonPage.html"
@@ -630,15 +810,113 @@ def custom_export(players: list[Player]) -> Generator[list[str | int | float | b
         "trial_set_completed",
         "trial_set_abandoned",
         "trial_id",
+        "is_attention_check", # 0 for regular trial, 1 for attention check
+        "passed", # 1 / 0 for attention checks, empty for regular trials
         "target_stimulus",
-        "option_a_stimulus",
-        "option_b_stimulus",
+        "option_a_stimulus", # for attention checks, correct option
+        "option_b_stimulus", # for attention checks, incorrect option
         "displayed_left_stimulus",
         "displayed_right_stimulus",
         "response_stimulus",
         "response_time",
     ]
 
+    # 1. Fetch all events with responses
+    # We fetch everything upfront to avoid N+1 query performance issues
+    trials = [t for t in Trial.filter() if t.response]
+    checks = [c for c in AttentionCheck.filter() if c.response]
+
+    # 2. Combine and sort by timestamp (trial_end) to preserve experiment flow
+    # This interleaves trials and attention checks exactly as they occurred
+    all_events = sorted(trials + checks, key=lambda x: x.trial_end)
+
+    print(f"Exporting {len(all_events)} total events ({len(trials)} trials, {len(checks)} checks)")
+
+    for event in all_events:
+        # Common attributes
+        trial_set = event.trial_set
+        participant_code = event.participant_code
+        participant_label = trial_set.participant.label if trial_set.participant else "UNKNOWN"
+        
+        # Determine if this is an Attention Check or Regular Trial
+        is_att_check = isinstance(event, AttentionCheck)
+
+        if is_att_check:
+            # --- ATTENTION CHECK MAPPING ---
+            is_ac_flag = 1
+            trial_id = event.check_id
+            passed = 1 if event.passed else 0
+            
+            # Map paths to short IDs
+            target_id = extract_stimulus_id(event.target)
+            # Map: Option A = Correct, Option B = Incorrect
+            opt_a_id = extract_stimulus_id(event.correct_option)
+            opt_b_id = extract_stimulus_id(event.incorrect_option)
+            
+            # Determine what was shown on left/right
+            if event.displayed_left == "correct":
+                disp_left = opt_a_id
+                disp_right = opt_b_id
+            else:
+                # displayed_left was "incorrect"
+                disp_left = opt_b_id
+                disp_right = opt_a_id
+                
+            # Determine what was chosen
+            if event.response == "correct":
+                resp_stim = opt_a_id
+            else:
+                resp_stim = opt_b_id
+
+        else:
+            # --- REGULAR TRIAL MAPPING ---
+            is_ac_flag = 0
+            trial_id = event.trial_id
+            passed = ""  # Not applicable for preference/discrimination trials
+            
+            # Map paths to short IDs
+            target_id = extract_stimulus_id(event.target)
+            opt_a_id = extract_stimulus_id(event.option_a)
+            opt_b_id = extract_stimulus_id(event.option_b)
+            
+            # Determine what was shown on left/right
+            if event.displayed_left == "option_a":
+                displayed_left_key = "option_a"
+                disp_left = opt_a_id
+                disp_right = opt_b_id
+            else:
+                displayed_left_key = "option_b"
+                disp_left = opt_b_id
+                disp_right = opt_a_id
+                
+            # Determine what was chosen
+            if event.response == "option_a":
+                resp_stim = opt_a_id
+            elif event.response == "option_b":
+                resp_stim = opt_b_id
+            else:
+                resp_stim = event.response
+
+        yield [
+            participant_code,
+            participant_label,
+            trial_set.set_id,
+            trial_set.repeat_id,
+            trial_set.completed,
+            trial_set.abandoned,
+            trial_id,
+            is_ac_flag,
+            passed,
+            target_id,
+            opt_a_id,
+            opt_b_id,
+            disp_left,
+            disp_right,
+            resp_stim,
+            event.response_time,
+        ]
+
+    """
     # Fetch ALL trials with responses in a single query (massive performance improvement)
     # This eliminates the N+1 query problem
     all_trials_with_responses = [
@@ -703,3 +981,4 @@ def custom_export(players: list[Player]) -> Generator[list[str | int | float | b
                 response_stimulus,
                 trial.response_time,
             ]
+"""
