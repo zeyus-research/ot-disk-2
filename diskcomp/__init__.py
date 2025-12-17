@@ -10,7 +10,7 @@ from otree.api import (  # type: ignore
     ExtraModel,
 )
 from otree.models import Participant  # type: ignore
-from random import randint, choice, seed
+from random import randint, choice, seed, sample
 from typing import ClassVar, Generator, Any, Literal
 from pathlib import Path
 import pandas as pd
@@ -354,11 +354,18 @@ def creating_session(subsession: Subsession) -> None:
         
             for block in range(1, C.NUM_BLOCKS + 1):
                 # Evenly space attention checks throughout the block
-                positions = []
-                for check_num in range(C.ATTENTION_CHECKS_PER_BLOCK):
-                    # Divide block into equal segments
-                    position = int((check_num + 1) * C.TRIALS_IN_BLOCK / (C.ATTENTION_CHECKS_PER_BLOCK + 1))
-                    positions.append(position)
+                #positions = []
+                #for check_num in range(C.ATTENTION_CHECKS_PER_BLOCK):
+                #    # Divide block into equal segments
+                #    position = int((check_num + 1) * C.TRIALS_IN_BLOCK / (C.ATTENTION_CHECKS_PER_BLOCK + 1))
+                #    positions.append(position)
+
+                # Randomised Logic:
+                # range of possible trials (avoid first and last ones)
+                safe_range = range(5, C.TRIALS_IN_BLOCK - 5)
+
+                # pick unique random position from that range
+                positions = sorted(sample(safe_range, C.ATTENTION_CHECKS_PER_BLOCK))
                 
                 #print(f"Block {block}: Creating {len(positions)} attention checks at positions {positions}")
                 
