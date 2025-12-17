@@ -46,6 +46,7 @@
     }
 </style>
     <div id="trial-info"></div>
+    <p id="trial-instruction" style="text-align: center; margin-top: 10px;">Select the disk that is more similar in style to the target</p>
 <!-- break out of container-->
     <div id="lock-missing">
         <h3>Please click to continue.</h3>
@@ -150,7 +151,7 @@
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             const otreeForm = document.getElementById('form');
-            
+                        
             
             ctx.canvas.width = visualViewport.width;
             ctx.canvas.height = visualViewport.height;
@@ -167,6 +168,8 @@
             const trialInfo = document.getElementById('trial-info');
             const pageType = document.getElementById('page_type');
 
+            const trialInstruction = document.getElementById('trial-instruction');
+
             console.log(leftOption.value);
             console.log(rightOption.value);
 
@@ -175,6 +178,12 @@
                 trialInfo.innerHTML = 'Practice ' + trialInfo.innerHTML;
             } else {
                 updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials, trialsInBlock);
+            }
+
+            if (pageType.value === "attention_check") {
+                trialInstruction.innerHTML = "This is an attention check, select the disk identical to the target";
+            } else {
+                trialInstruction.innerHTML = "Select the disk that is more similar in style to the target";
             }
 
             const successImg = document.createElement('img');
@@ -508,6 +517,8 @@
                         leftOption.value = data.left_option;
                         rightOption.value = data.right_option;
                         pageType.value = 'attention_check';
+
+                        trialInstruction.innerHTML = "This is an attention check, select the disk identical to the target";
                         
                         trialInfo.innerHTML = 'Attention Check'; // Silent
                         
@@ -534,6 +545,9 @@
                         leftOption.value = data.left_option;
                         rightOption.value = data.right_option;
                         pageType.value = data.page_type;
+
+                        //reset instruction text for regular trials
+                        trialInstruction.innerHTML = "Select the disk that is more similar in style to the target";
 
                         if (data.page_type === 'practice') {
                             updateTrialInfo(trialInfo, parseInt(trial.value)+1, nTrials, trialsInBlock);
