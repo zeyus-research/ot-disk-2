@@ -10,15 +10,37 @@ The actual left/right display position is balanced at runtime, not in the CSV.
 """
 
 import csv
+from math import ceil
 from pathlib import Path
-from random import shuffle, randint
+from random import shuffle
+# from random import randint
 import re
 
+###################################
+######### MAIN VARIABLES #########
+###################################
+
+n_participants: int = 155 # number of trial sets to generate
+expected_repeats: int = 3 # expected number of repeats per unique stimuli combination across all trial sets
+
+# Optional: Path to previous trial results CSV to account for completed trials
+# if it is None, the script will generate from scratch
+# if it is specified, the results from the previous study
+# will be subtracted from the expected repeats
+previous_trial_results_file: Path | None = None
+# e.g.
+# previous_trial_results_file = Path("path_to_pilot/pilot_trial_results.csv")
+
 # Path to the directory containing the stimulus images
-stimulus_dir = Path("diskcomp/static/stimuli")
+stimulus_dir: Path = Path("diskcomp/static/stimuli")
 
 # Path to the CSV file to write the list of stimulus images to
-output_file = Path("diskcomp/_private/stim.csv")
+output_file: Path = Path("diskcomp/_private/stim.csv")
+
+
+###################################
+######### MAIN SCRIPT #############
+###################################
 
 # Get a list of all of the stimulus images in the directory
 stimulus_images = [f for f in stimulus_dir.iterdir() if f.is_file() and f.suffix == ".png"]
@@ -73,12 +95,36 @@ with open(output_file, "w", newline="", encoding="utf-8") as f:
                         trial_combinations.append((option_pair[0], option_pair[1], target))
                         n_results += 1
 
-print(f"Generated {n_results} unique combinations")
-# 69930
-n_participants = 155
-n_trials_per_participant = 428
-expected_repeats = 3
+print(f"Generated {n_results} unique combinations") # 23310
 
+# Read previous trial results to account for completed trials
+pilot_result_trial_combinations: dict[tuple[str, ...], int] = {}
+n_trials_in_pilot = 0
+
+# read csv of existing trials
+if previous_trial_results_file is not None:
+    if not previous_trial_results_file.exists():
+        raise FileNotFoundError(f"Previous trial results file not found: {previous_trial_results_file}")
+
+    with open(previous_trial_results_file, "r", newline="", encoding="utf-8") as f:
+        dictReader = csv.DictReader(f)
+        for pilot_trial in dictReader:
+            stim_a = pilot_trial['option_a']
+            stim_b = pilot_trial['option_b']
+            target = pilot_trial['target']
+            unique_id = tuple(sorted([stim_a, stim_b])) + (target,) # e.g.('93a', '93b', '186b')
+            if unique_id not in pilot_result_trial_combinations:
+                pilot_result_trial_combinations[unique_id] = 1
+            else:
+                pilot_result_trial_combinations[unique_id] += 1
+            n_trials_in_pilot += 1
+
+
+######## Do not use this to calculate.
+n_trials_per_participant = ceil((n_results * expected_repeats - n_trials_in_pilot) / n_participants)
+print(f"To achieve ~{expected_repeats} repeats per combination:"
+      f" {n_participants} trial sets x {n_trials_per_participant} trials ="
+      f" {n_participants * n_trials_per_participant} total trials")
 # 427.935483871
 # 66330 -> 66341
 shuffle(trial_combinations)
@@ -103,21 +149,6 @@ print(f"Each trial set has {n_trials_per_participant} trials")
 # Verify the assignments
 stim_summary: dict[int, int] = {}
 stim_summary_excl_pilot: dict[int, int] = {}
-
-pilot_result_trial_combinations: dict[tuple[str, ...], int] = {}
-
-# read csv of existing trials
-# with open("../path/to/pilot_data_results.csv", "r", newline="", encoding="utf-8") as f:
-#   reader = csv.DictReader(f)
-#   for row in reader:
-#     stim_a = row['option_a']
-#     stim_b = row['option_b']
-#     target = row['target']
-#     unique_id = tuple(sorted([stim_a, stim_b])) + (target,) # e.g.('93a', '93b', '186b')
-#     if unique_id not in pilot_result_trial_combinations:
-#        pilot_result_trial_combinations[unique_id] = 1
-#     else:
-#        pilot_result_trial_combinations[unique_id] += 1
 
 with open(output_file, "r", newline="", encoding="utf-8") as f:
     reader = csv.reader(f)
@@ -205,6 +236,7 @@ with open(output_file, "r", newline="", encoding="utf-8") as f:
             stim_summary_excl_pilot[remaining_count] = stim_summary_excl_pilot.get(remaining_count, 0) + 1
         if count < expected_repeats:  # Allow some flexibility
             print(f"WARNING: Combination {combination} appears only {count} times")
+            pass
     
     print("\n=== Verification Summary ===")
     print(f"Number of trial sets: {len(participant_trials)}")
