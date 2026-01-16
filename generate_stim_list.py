@@ -11,7 +11,7 @@ The actual left/right display position is balanced at runtime, not in the CSV.
 
 import csv
 from pathlib import Path
-from random import shuffle
+from random import shuffle, randint
 import re
 
 # Path to the directory containing the stimulus images
@@ -74,11 +74,13 @@ with open(output_file, "w", newline="", encoding="utf-8") as f:
                         n_results += 1
 
 print(f"Generated {n_results} unique combinations")
-
-n_participants = 180
-n_trials_per_participant = 400
+# 69930
+n_participants = 155
+n_trials_per_participant = 428
 expected_repeats = 3
 
+# 427.935483871
+# 66330 -> 66341
 shuffle(trial_combinations)
 
 # Create a CSV file that assigns trials to participants
@@ -100,29 +102,86 @@ print(f"Each trial set has {n_trials_per_participant} trials")
 
 # Verify the assignments
 stim_summary: dict[int, int] = {}
+stim_summary_excl_pilot: dict[int, int] = {}
+
+pilot_result_trial_combinations: dict[tuple[str, ...], int] = {}
+
+# read csv of existing trials
+# with open("../path/to/pilot_data_results.csv", "r", newline="", encoding="utf-8") as f:
+#   reader = csv.DictReader(f)
+#   for row in reader:
+#     stim_a = row['option_a']
+#     stim_b = row['option_b']
+#     target = row['target']
+#     unique_id = tuple(sorted([stim_a, stim_b])) + (target,) # e.g.('93a', '93b', '186b')
+#     if unique_id not in pilot_result_trial_combinations:
+#        pilot_result_trial_combinations[unique_id] = 1
+#     else:
+#        pilot_result_trial_combinations[unique_id] += 1
+
 with open(output_file, "r", newline="", encoding="utf-8") as f:
     reader = csv.reader(f)
     next(reader)  # skip header
     participant_trials: dict[str, int] = {}
-    combination_counts: dict[tuple[str, ...], int] = {}
+    combination_counts: dict[tuple[str, ...], int] = pilot_result_trial_combinations.copy()
+    # ('93a', '93b', '186b') =/= ('93b', '93a', '186b')
+    # this is an example of random number of "completed" tirals from a pilot
+    # this would be subtracted from the expected_repeats for those combinations
+    # pilot_result_trial_combinations = [
+    #     ('93a', '93b', '186b'), # 1
+    #     ('93a', '93b', '201a'), # 3
+    #     ('93a', '93b', '202a'), # 2
+    #     ('93a', '93b', '202b'),
+    #     ('93a', '93b', '226a'),
+    #     ('93a', '93b', '226b'),
+    #     ('93a', '93b', '241a'),
+    #     ('93a', '93b', '241b'),
+    #     ('93a', '93b', '307a'),
+    #     ('93a', '93b', '307b'),
+    #     ('93a', '93b', '353a'),
+    #     ('93a', '93b', '355a'),
+    #     ('93a', '93b', '360a'),
+    #     ('93a', '93b', '370a'),
+    #     ('93a', '93b', '418a'),
+    #     ('93a', '93b', '420a'),
+    #     ('93a', '93b', '420b'),
+    #     ('93a', '93b', '431a'),
+    #     ('93a', '93b', '484a'),
+    #     ('93a', '93b', '552a'),
+    #     ('93a', '93b', '555a'),
+    #     ('93a', '93b', '626a'),
+    #     ('93a', '93b', '631a'),
+    #     ('93a', '93b', '70a'),
+    #     ('93a', '93b', '70b'),
+    #     ('93a', '93b', '73a'),
+    #     ('93a', '93b', '73b'),
+    #     ('93a', '93b', '84a'),
+    # ]
+    # pilot_result_trial_combinations = {combination: randint(1, 3) for combination in pilot_result_trial_combinations}
     
     for row in reader:
         participant_id = row[0]
         option_a = row[2]
         option_b = row[3]
         target = row[4]
+
+        # Normalize combination order for counting
+        combination = tuple(sorted([option_a, option_b])) + (target,)
+        if combination not in combination_counts:
+            combination_counts[combination] = 1
+        else:
+            if combination_counts[combination] >= expected_repeats:
+                if combination in pilot_result_trial_combinations:
+                    continue
+            combination_counts[combination] += 1
         
         if participant_id not in participant_trials:
             participant_trials[participant_id] = 1
         else:
             participant_trials[participant_id] += 1
         
-        # Normalize combination order for counting
-        combination = tuple(sorted([option_a, option_b])) + (target,)
-        if combination not in combination_counts:
-            combination_counts[combination] = 1
-        else:
-            combination_counts[combination] += 1
+        
+        
     
     # Check for incorrect trial counts
     for participant_id, n_trials in participant_trials.items():
@@ -132,7 +191,19 @@ with open(output_file, "r", newline="", encoding="utf-8") as f:
     # Summarize combination frequencies
     for combination, count in combination_counts.items():
         stim_summary[count] = stim_summary.get(count, 0) + 1
-        if count < expected_repeats - 1:  # Allow some flexibility
+        if combination not in pilot_result_trial_combinations:
+            stim_summary_excl_pilot[count] = stim_summary_excl_pilot.get(count, 0) + 1
+        else:
+            # Adjust expected repeats based on pilot data
+            pilot_count = pilot_result_trial_combinations[combination]
+            adjusted_expected = expected_repeats - pilot_count
+            if count < adjusted_expected:
+                print(f"WARNING: Combination {combination} appears only {count} times (expected {adjusted_expected} after pilot adjustment)")
+            # add remaining counts to the summary
+            # subtract pilot count from combination count
+            remaining_count = count - pilot_count
+            stim_summary_excl_pilot[remaining_count] = stim_summary_excl_pilot.get(remaining_count, 0) + 1
+        if count < expected_repeats:  # Allow some flexibility
             print(f"WARNING: Combination {combination} appears only {count} times")
     
     print("\n=== Verification Summary ===")
@@ -141,5 +212,8 @@ with open(output_file, "r", newline="", encoding="utf-8") as f:
     print(f"Total unique combinations: {len(combination_counts)}")
     print("\nCombination frequency distribution:")
     for count, n_combinations in sorted(stim_summary.items()):
+        print(f"  {n_combinations} combinations appear {count} times")
+    print("\nCombination frequency distribution (excluding pilot data):")
+    for count, n_combinations in sorted(stim_summary_excl_pilot.items()):
         print(f"  {n_combinations} combinations appear {count} times")
     print("\nVerification complete!")
