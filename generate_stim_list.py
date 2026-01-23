@@ -27,7 +27,7 @@ expected_repeats: int = 3 # expected number of repeats per unique stimuli combin
 # if it is None, the script will generate from scratch
 # if it is specified, the results from the previous study
 # will be subtracted from the expected repeats
-previous_trial_results_file: Path | None = None
+previous_trial_results_file: Path | None = Path("./pilot_rated_stims_clean_names_sorted.csv")
 # e.g.
 # previous_trial_results_file = Path("path_to_pilot/pilot_trial_results.csv")
 
@@ -127,19 +127,44 @@ print(f"To achieve ~{expected_repeats} repeats per combination:"
       f" {n_participants * n_trials_per_participant} total trials")
 # 427.935483871
 # 66330 -> 66341
-shuffle(trial_combinations)
+trial_pool = trial_combinations * 3
 
+shuffle(trial_combinations)
 # Create a CSV file that assigns trials to participants
 # Note: "participant_id" here represents a trial set, not an actual participant
 output_file = Path("diskcomp/_private/trial_list.csv")
+
+
+# remove trials that were already completed in the pilot
+if previous_trial_results_file is not None:
+    for completed_combination in pilot_result_trial_combinations.keys():
+        # remove the number of completed trials from the trial pool
+        option_a, option_b, target = completed_combination
+        for _ in range(pilot_result_trial_combinations[completed_combination]):
+            if (option_a, option_b, target) in trial_pool:
+                trial_pool.remove((option_a, option_b, target))
+
+
+
 
 with open(output_file, "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
     writer.writerow(["participant_id", "trial_num", "option_a", "option_b", "target", "option_a_file", "option_b_file", "target_file"])
     for p in range(n_participants):
+        trials_allocated_to_participant: set[tuple[str, str, str]] = set()
         for t in range(n_trials_per_participant):
+            if len(trial_pool) == 0:
+                print("WARNING: Trial pool exhausted before all participants assigned!")
+                trial_pool = trial_combinations
+                shuffle(trial_pool)
             trial_index = (p * n_trials_per_participant + t) % len(trial_combinations)
             option_a, option_b, target = trial_combinations[trial_index]
+            while (option_a, option_b, target) in trials_allocated_to_participant or trial_pool.count((option_a, option_b, target)) == 0:
+                # find a new trial that hasn't been allocated to this participant yet
+                trial_index = (trial_index + 1) % len(trial_combinations)
+                option_a, option_b, target = trial_combinations[trial_index]
+            trials_allocated_to_participant.add((option_a, option_b, target))
+
 
             writer.writerow([p + 1, t + 1, option_a, option_b, target, stim_file_map[option_a], stim_file_map[option_b], stim_file_map[target]])
 
@@ -149,6 +174,8 @@ print(f"Each trial set has {n_trials_per_participant} trials")
 # Verify the assignments
 stim_summary: dict[int, int] = {}
 stim_summary_excl_pilot: dict[int, int] = {}
+
+
 
 with open(output_file, "r", newline="", encoding="utf-8") as f:
     reader = csv.reader(f)
@@ -201,9 +228,6 @@ with open(output_file, "r", newline="", encoding="utf-8") as f:
         if combination not in combination_counts:
             combination_counts[combination] = 1
         else:
-            if combination_counts[combination] >= expected_repeats:
-                if combination in pilot_result_trial_combinations:
-                    continue
             combination_counts[combination] += 1
         
         if participant_id not in participant_trials:
