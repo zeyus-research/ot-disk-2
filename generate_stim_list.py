@@ -12,13 +12,15 @@ The actual left/right display position is balanced at runtime, not in the CSV.
 import csv
 from math import ceil
 from pathlib import Path
-from random import shuffle
+from random import shuffle, seed
 # from random import randint
 import re
 
 ###################################
 ######### MAIN VARIABLES #########
 ###################################
+
+random_seed: int = 42
 
 n_participants: int = 155 # number of trial sets to generate
 expected_repeats: int = 3 # expected number of repeats per unique stimuli combination across all trial sets
@@ -41,6 +43,9 @@ output_file: Path = Path("diskcomp/_private/stim.csv")
 ###################################
 ######### MAIN SCRIPT #############
 ###################################
+
+# set random seed for reproducibility
+seed(random_seed)
 
 # Get a list of all of the stimulus images in the directory
 stimulus_images = [f for f in stimulus_dir.iterdir() if f.is_file() and f.suffix == ".png"]
