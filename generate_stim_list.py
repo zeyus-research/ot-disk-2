@@ -119,6 +119,12 @@ if previous_trial_results_file is not None:
                 pilot_result_trial_combinations[unique_id] += 1
             n_trials_in_pilot += 1
 
+print(f"Found {n_trials_in_pilot} completed trials in pilot data")
+# show number of combinations that appear more than once from pilot
+for combination, count in pilot_result_trial_combinations.items():
+    if count > 1:
+        print(f"Combination {combination} appears {count} times in pilot data")
+
 
 ######## Do not use this to calculate.
 n_trials_per_participant = ceil((n_results * expected_repeats - n_trials_in_pilot) / n_participants)
@@ -134,7 +140,7 @@ shuffle(trial_combinations)
 # Note: "participant_id" here represents a trial set, not an actual participant
 output_file = Path("diskcomp/_private/trial_list.csv")
 
-
+print(f"Trial pool size before removing pilot completed trials: {len(trial_pool)}")
 # remove trials that were already completed in the pilot
 if previous_trial_results_file is not None:
     for completed_combination in pilot_result_trial_combinations.keys():
@@ -145,6 +151,15 @@ if previous_trial_results_file is not None:
                 trial_pool.remove((option_a, option_b, target))
 
 
+print(f"Trial pool size after removing pilot completed trials: {len(trial_pool)}")
+
+expected_total_trials = n_participants * n_trials_per_participant
+if len(trial_pool) < expected_total_trials:
+    print(f"WARNING: Trial pool size ({len(trial_pool)}) is smaller than expected total trials ({expected_total_trials})!")
+    print("Randomly allocating extra trials from the full set to fill the gap.")
+    number_required = expected_total_trials - len(trial_pool)
+    shuffle(trial_combinations)
+    trial_pool.extend(trial_combinations[:number_required])
 
 
 with open(output_file, "w", newline="", encoding="utf-8") as f:
@@ -153,19 +168,15 @@ with open(output_file, "w", newline="", encoding="utf-8") as f:
     for p in range(n_participants):
         trials_allocated_to_participant: set[tuple[str, str, str]] = set()
         for t in range(n_trials_per_participant):
-            if len(trial_pool) == 0:
-                print("WARNING: Trial pool exhausted before all participants assigned!")
-                trial_pool = trial_combinations
-                shuffle(trial_pool)
-            trial_index = (p * n_trials_per_participant + t) % len(trial_combinations)
-            option_a, option_b, target = trial_combinations[trial_index]
-            while (option_a, option_b, target) in trials_allocated_to_participant or trial_pool.count((option_a, option_b, target)) == 0:
+            extra_index = 0
+            option_a, option_b, target = trial_pool[extra_index]
+            
+            while (option_a, option_b, target) in trials_allocated_to_participant:
+                extra_index += 1
                 # find a new trial that hasn't been allocated to this participant yet
-                trial_index = (trial_index + 1) % len(trial_combinations)
-                option_a, option_b, target = trial_combinations[trial_index]
+                option_a, option_b, target = trial_pool[extra_index]
             trials_allocated_to_participant.add((option_a, option_b, target))
-
-
+            trial_pool.remove((option_a, option_b, target))
             writer.writerow([p + 1, t + 1, option_a, option_b, target, stim_file_map[option_a], stim_file_map[option_b], stim_file_map[target]])
 
 print(f"\nCreated trial assignments for {n_participants} trial sets")
