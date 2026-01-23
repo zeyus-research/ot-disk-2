@@ -133,9 +133,15 @@ print(f"To achieve ~{expected_repeats} repeats per combination:"
       f" {n_participants * n_trials_per_participant} total trials")
 # 427.935483871
 # 66330 -> 66341
-trial_pool = trial_combinations * 3
+
 
 shuffle(trial_combinations)
+trial_pool: list[tuple[str, str, str]] = []
+for _ in range(expected_repeats):
+    trial_combinations_copy = trial_combinations.copy()
+    shuffle(trial_combinations_copy)
+    trial_pool.extend(trial_combinations_copy)
+
 # Create a CSV file that assigns trials to participants
 # Note: "participant_id" here represents a trial set, not an actual participant
 output_file = Path("diskcomp/_private/trial_list.csv")
@@ -158,8 +164,9 @@ if len(trial_pool) < expected_total_trials:
     print(f"WARNING: Trial pool size ({len(trial_pool)}) is smaller than expected total trials ({expected_total_trials})!")
     print("Randomly allocating extra trials from the full set to fill the gap.")
     number_required = expected_total_trials - len(trial_pool)
-    shuffle(trial_combinations)
-    trial_pool.extend(trial_combinations[:number_required])
+    trial_combinations_copy = trial_combinations.copy()
+    shuffle(trial_combinations_copy)
+    trial_pool.extend(trial_combinations_copy[:number_required])
 
 
 with open(output_file, "w", newline="", encoding="utf-8") as f:
