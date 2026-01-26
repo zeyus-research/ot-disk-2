@@ -16,14 +16,41 @@ from random import shuffle, seed
 # from random import randint
 import re
 
+
 ###################################
-######### MAIN VARIABLES #########
+########## REF VARIABLES ##########
 ###################################
 
-random_seed: int = 42
+# DO NOT CHANGE THESE VALUES
+# THE FIXED_* VALUES
+# ARE JUST FOR REFERENCE AND HAVE NO EFFECT
 
-n_participants: int = 155 # number of trial sets to generate
-expected_repeats: int = 3 # expected number of repeats per unique stimuli combination across all trial sets
+
+# How many target discs are there
+FIXED_TARGETS: int = 1
+# How many comparison options are there
+FIXED_OPTIONS: int = 2
+
+###################################
+######### MAIN VARIABLES ##########
+###################################
+
+# You can change these values to adjust the generation
+
+# this prevents ANY (target or options) stimuli from repeating
+# within N trials for a given participant/trial set
+# set to 0 to disable this feature
+prevent_stimulus_repeat_within_n_trials: int = 2
+
+# Set random seed for reproducibility
+random_seed: int = 1999
+
+# number of trial sets to generate
+n_participants: int = 155
+# expected number of repeats per unique stimuli combination across all trial sets
+# this is a minimum target; actual repeats may be higher due to rounding
+expected_repeats: int = 3
+
 
 # Optional: Path to previous trial results CSV to account for completed trials
 # if it is None, the script will generate from scratch
@@ -131,7 +158,7 @@ for combination, count in pilot_result_trial_combinations.items():
         print(f"Combination {combination} appears {count} times in pilot data")
 
 
-######## Do not use this to calculate.
+# Calculate number of trials per participant
 n_trials_per_participant = ceil((n_results * expected_repeats - n_trials_in_pilot) / n_participants)
 print(f"To achieve ~{expected_repeats} repeats per combination:"
       f" {n_participants} trial sets x {n_trials_per_participant} trials ="
@@ -164,14 +191,32 @@ if previous_trial_results_file is not None:
 
 print(f"Trial pool size after removing pilot completed trials: {len(trial_pool)}")
 
+prevent_stim_repeat: bool = prevent_stimulus_repeat_within_n_trials > 0
+
 expected_total_trials = n_participants * n_trials_per_participant
 if len(trial_pool) < expected_total_trials:
     print(f"WARNING: Trial pool size ({len(trial_pool)}) is smaller than expected total trials ({expected_total_trials})!")
-    print("Randomly allocating extra trials from the full set to fill the gap.")
+    
     number_required = expected_total_trials - len(trial_pool)
     trial_combinations_copy = trial_combinations.copy()
     shuffle(trial_combinations_copy)
-    trial_pool.extend(trial_combinations_copy[:number_required])
+    if prevent_stim_repeat:
+        print("Adding full set of trials because stimulus repeat prevention is enabled.")
+        # add full set of trials to the pool to ensure enough trials
+        trial_pool.extend(trial_combinations_copy)
+    else:
+        print("Randomly allocating extra trials from the full set to fill the gap.")
+        trial_pool.extend(trial_combinations_copy[:number_required])
+
+
+def stims_in_trial_list(targets: tuple[str, str, str], trial_list: list[tuple[str, str, str]]) -> bool:
+    all_targets = set(targets)
+    all_trial_stims = set([stim for trial in trial_list for stim in trial])
+    result = not all_targets.isdisjoint(all_trial_stims)
+    if result:
+        print(f"Found repeating stim in recent trials: {targets} in {trial_list}")
+        pass
+    return result
 
 
 with open(output_file, "w", newline="", encoding="utf-8") as f:
@@ -179,15 +224,29 @@ with open(output_file, "w", newline="", encoding="utf-8") as f:
     writer.writerow(["participant_id", "trial_num", "option_a", "option_b", "target", "option_a_file", "option_b_file", "target_file"])
     for p in range(n_participants):
         trials_allocated_to_participant: set[tuple[str, str, str]] = set()
+        recent_trials: list[tuple[str, str, str]] = []
         for t in range(n_trials_per_participant):
             extra_index = 0
             option_a, option_b, target = trial_pool[extra_index]
             
-            while (option_a, option_b, target) in trials_allocated_to_participant:
+            # ensure:
+            # 1. no duplicate trials for this participant
+            # 2. no stimulus repeats within N trials for this participant
+            #    (if configured)
+            while (option_a, option_b, target) in trials_allocated_to_participant or \
+                  (prevent_stim_repeat and
+                   stims_in_trial_list((option_a, option_b, target), recent_trials)):
                 extra_index += 1
+                extra_index %= len(trial_pool)
                 # find a new trial that hasn't been allocated to this participant yet
                 option_a, option_b, target = trial_pool[extra_index]
             trials_allocated_to_participant.add((option_a, option_b, target))
+
+            if prevent_stim_repeat:
+                recent_trials.append((option_a, option_b, target))
+                while len(recent_trials) > prevent_stimulus_repeat_within_n_trials:
+                    recent_trials.pop(0)
+
             trial_pool.remove((option_a, option_b, target))
             writer.writerow([p + 1, t + 1, option_a, option_b, target, stim_file_map[option_a], stim_file_map[option_b], stim_file_map[target]])
 
